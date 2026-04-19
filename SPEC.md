@@ -67,15 +67,16 @@ is_pension = acnt_prdt_cd == "29"
 
 ---
 
-### ADR-003: 로컬 데이터베이스로 DuckDB 선택
+### ADR-003: 분석 데이터베이스로 DuckDB/MotherDuck 선택
 
-**결정**: SQLite 대신 DuckDB 사용
+**결정**: SQLite 대신 DuckDB 계열을 사용하고, 운영 중심 DB는 MotherDuck으로 둔다.
 
 **이유**:
 - 컬럼 기반 저장소 → 시계열 분석(볼린저 밴드, 이동평균) 쿼리 성능 우월
 - 네이티브 window function 지원 → Python 없이 SQL만으로 기술적 지표 계산 가능
 - `query().df()` 한 줄로 pandas DataFrame 변환 → 시각화 연동 용이
 - Parquet 직접 쿼리 지원 → 향후 데이터 규모 확장 시 마이그레이션 무비용
+- MotherDuck을 사용하면 여러 MCP 인스턴스와 향후 웹 호스팅 환경에서 로컬 파일 락 문제를 피할 수 있음
 
 **대안 검토**: SQLite + pandas → 분석 로직을 Python에서 처리해야 하므로 복잡도 증가
 
@@ -91,6 +92,63 @@ is_pension = acnt_prdt_cd == "29"
 | 환율 이력 | INSERT OR IGNORE | 과거 환율은 불변 |
 | 계좌 잔고 스냅샷 | 순수 INSERT (append-only) | 같은 날도 시점마다 다른 값 → 전부 누적 |
 | 손익 리포트 | 순수 INSERT (append-only) | 조회 시점의 스냅샷으로 보존 |
+
+---
+
+### ADR-005: 루트 문서/설계, `src/` 애플리케이션 코드 구조
+
+**결정**: 루트 디렉터리는 문서, 설정, 호환 진입점 중심으로 유지하고 실제 애플리케이션 코드는
+`src/kis_mcp_server/` 아래에 둔다.
+
+**이유**:
+- MCP 서버, KIS API client, DB repository, 분석 로직, 향후 Web API를 분리할 기반이 필요
+- 테스트 코드가 실제 패키지 import 경로를 사용하도록 만들어 경로 의존성을 줄임
+- 기존 Claude/Codex Desktop 설정은 루트 `server.py`를 실행하므로 호환 shim을 남겨 점진 이행
+- 루트에 런타임 산출물과 소스가 섞이는 문제를 줄이고 보안/배포 문서화를 명확히 함
+
+**현재 적용**:
+- 루트 `server.py`: `src/kis_mcp_server/app.py`의 `main()` 호출
+- 루트 `db.py`: `src/kis_mcp_server/db.py` re-export
+- 기본 런타임 데이터 위치는 프로젝트 루트 기준 `var`
+- 토큰 파일은 `var/tokens/token_{CANO}.json`
+- local 모드 DuckDB는 `var/local/kis_portfolio.duckdb`
+
+**후속 과제**:
+- `app.py`를 `auth`, `kis_client`, `tools`, `analytics` 모듈로 분해
+- pytest 기반 테스트 추가
+- 웹 배포용 secret 관리 정책 확정
+
+---
+
+### ADR-006: MotherDuck을 운영 DB로 사용하고 로컬 DuckDB는 명시적 local/backup 용도로 제한
+
+**결정**: `KIS_DB_MODE=motherduck`을 기본값으로 둔다. `MOTHERDUCK_TOKEN`이 없으면 조용히 로컬
+DuckDB로 fallback하지 않고 서버 시작/DB 연결 시 명확히 실패한다.
+
+**이유**:
+- 계좌별 MCP 인스턴스와 멀티 에이전트 작업이 동시에 로컬 DuckDB 파일을 열면 락 충돌이 발생할 수 있음
+- token 누락 등 설정 실수로 데이터가 로컬 DB와 MotherDuck에 나뉘어 저장되는 사고를 방지
+- 로컬 DuckDB는 운영 트랜잭션 중심이 아니라 개발, 장애 대응, 주기적 백업 타겟으로 다루는 것이 명확함
+
+**환경변수**:
+```text
+KIS_DB_MODE=motherduck
+MOTHERDUCK_DATABASE=kis_portfolio
+MOTHERDUCK_TOKEN=...
+KIS_DATA_DIR=var
+```
+
+**로컬 모드**:
+```text
+KIS_DB_MODE=local
+KIS_DATA_DIR=var
+```
+
+상대경로로 지정한 `KIS_DATA_DIR`, `KIS_TOKEN_DIR`, `KIS_LOCAL_DB_PATH`는 현재 작업 디렉터리가 아니라
+프로젝트 루트 기준으로 해석한다.
+
+**백업**: MotherDuck 백업은 Parquet을 기본 포맷으로 사용한다. `scripts/backup_motherduck.py`는
+핵심 테이블을 `var/backup/parquet/YYYYMMDD_HHMMSS/` 아래로 export하고 `manifest.json`을 함께 남긴다.
 
 ---
 
@@ -117,7 +175,7 @@ is_pension = acnt_prdt_cd == "29"
 
 > 이 섹션은 Codex(또는 다른 AI 코딩 도구)에 구현을 위임하기 위한 상세 명세다.
 > 모든 쿼리는 `db.py`의 `get_connection()`으로 얻은 커넥션에서 실행한다.
-> 결과는 `.df()` 호출로 pandas DataFrame으로 변환 후 MCP tool의 응답에 포함한다.
+> 결과는 DuckDB cursor 결과를 JSON 직렬화 가능한 `list[dict]`로 변환해 MCP tool의 응답에 포함한다.
 
 ---
 
@@ -129,47 +187,55 @@ is_pension = acnt_prdt_cd == "29"
 
 **파라미터**:
 - `symbol` (str): 종목 코드 (예: `005930`)
-- `exchange` (str): `KR` 또는 `US` (기본값: `KR`)
+- `exchange` (str): `KRX`, `NAS`, `NYS` 등 `price_history.exchange`에 저장된 거래소 코드 (기본값: `KRX`)
 - `window` (int): 이동평균 기간 (기본값: 20)
 - `num_std` (float): 표준편차 배수 (기본값: 2.0)
+- `limit` (int): 반환할 최근 행 수 (기본값: 60)
 
 **DuckDB SQL 구현**:
 ```sql
 WITH price_stats AS (
   SELECT
     symbol,
+    exchange,
     date,
-    close_price,
-    AVG(close_price) OVER (
-      PARTITION BY symbol
+    close,
+    COUNT(close) OVER (
+      PARTITION BY symbol, exchange
+      ORDER BY date
+      ROWS BETWEEN {window-1} PRECEDING AND CURRENT ROW
+    ) AS observations,
+    AVG(close) OVER (
+      PARTITION BY symbol, exchange
       ORDER BY date
       ROWS BETWEEN {window-1} PRECEDING AND CURRENT ROW
     ) AS sma,
-    STDDEV(close_price) OVER (
-      PARTITION BY symbol
+    STDDEV(close) OVER (
+      PARTITION BY symbol, exchange
       ORDER BY date
       ROWS BETWEEN {window-1} PRECEDING AND CURRENT ROW
     ) AS std
   FROM price_history
-  WHERE symbol = ? AND exchange = ?
+  WHERE symbol = ? AND exchange = ? AND close IS NOT NULL
 )
 SELECT
   symbol,
+  exchange,
   date,
-  close_price,
-  ROUND(sma, 2)                          AS sma_{window},
+  close,
+  ROUND(sma, 2)                          AS sma,
   ROUND(sma + {num_std} * std, 2)        AS upper_band,
   ROUND(sma - {num_std} * std, 2)        AS lower_band,
-  ROUND((close_price - sma) / NULLIF(std, 0), 2) AS z_score,
+  ROUND((close - sma) / NULLIF(std, 0), 2) AS z_score,
   CASE
-    WHEN close_price > sma + {num_std} * std THEN '과매수'
-    WHEN close_price < sma - {num_std} * std THEN '과매도'
+    WHEN close > sma + {num_std} * std THEN '과매수'
+    WHEN close < sma - {num_std} * std THEN '과매도'
     ELSE '중립'
   END AS signal
 FROM price_stats
-WHERE sma IS NOT NULL  -- window 미충족 행 제외
+WHERE observations >= {window}
 ORDER BY date DESC
-LIMIT 60;
+LIMIT ?;
 ```
 
 **응답 형식 (JSON)**: 최근 60일 데이터 + 현재 signal 요약
@@ -184,62 +250,74 @@ LIMIT 60;
 **구현 위치**: `server.py`에 신규 tool `get-portfolio-anomalies` 추가
 
 **파라미터**:
-- `account_name` (str): 계좌 서버명 (예: `kis-ria`, `kis-brokerage`)
+- `account_id` (str): 계좌번호(CANO). 빈값이면 현재 MCP 인스턴스의 `KIS_CANO`
 - `z_threshold` (float): 이상치 기준 z-score (기본값: 2.0)
 - `lookback_days` (int): 분석 기간 (기본값: 90)
+- `limit` (int): 반환할 최대 행 수 (기본값: 20)
 
 **DuckDB SQL 구현**:
 ```sql
 WITH daily_snapshots AS (
   -- 하루에 여러 번 저장될 수 있으므로 일별 최종값만 사용
   SELECT
-    account_name,
-    snapshot_time::DATE AS snap_date,
-    LAST(total_eval_amount ORDER BY snapshot_time) AS total_eval_amount
+    account_id,
+    CAST(snapshot_at AS DATE) AS snap_date,
+    ARG_MAX(total_eval_amt, snapshot_at) AS total_eval_amt
   FROM portfolio_snapshots
-  WHERE account_name = ?
-    AND snapshot_time >= CURRENT_DATE - INTERVAL '{lookback_days} days'
-  GROUP BY account_name, snap_date
+  WHERE account_id = ?
+    AND snapshot_at >= CURRENT_DATE - INTERVAL '{lookback_days} days'
+    AND total_eval_amt IS NOT NULL
+  GROUP BY account_id, snap_date
 ),
 daily_returns AS (
   SELECT
-    account_name,
+    account_id,
     snap_date,
-    total_eval_amount,
-    LAG(total_eval_amount) OVER (
-      PARTITION BY account_name ORDER BY snap_date
-    ) AS prev_amount,
-    (total_eval_amount - LAG(total_eval_amount) OVER (
-      PARTITION BY account_name ORDER BY snap_date
-    )) / NULLIF(LAG(total_eval_amount) OVER (
-      PARTITION BY account_name ORDER BY snap_date
-    ), 0) * 100 AS return_pct
+    total_eval_amt,
+    LAG(total_eval_amt) OVER (
+      PARTITION BY account_id ORDER BY snap_date
+    ) AS prev_total_eval_amt
   FROM daily_snapshots
 ),
 stats AS (
   SELECT
-    account_name,
+    account_id,
     AVG(return_pct)    AS mean_return,
     STDDEV(return_pct) AS std_return
-  FROM daily_returns
+  FROM (
+    SELECT
+      account_id,
+      (total_eval_amt - prev_total_eval_amt)
+        / NULLIF(prev_total_eval_amt, 0) * 100 AS return_pct
+    FROM daily_returns
+    WHERE prev_total_eval_amt IS NOT NULL
+  )
   WHERE return_pct IS NOT NULL
-  GROUP BY account_name
+  GROUP BY account_id
 )
 SELECT
   d.snap_date,
-  d.total_eval_amount,
-  ROUND(d.return_pct, 2) AS return_pct,
-  ROUND((d.return_pct - s.mean_return) / NULLIF(s.std_return, 0), 2) AS z_score,
+  d.total_eval_amt,
+  ROUND((d.total_eval_amt - d.prev_total_eval_amt)
+    / NULLIF(d.prev_total_eval_amt, 0) * 100, 2) AS return_pct,
+  ROUND(((
+    d.total_eval_amt - d.prev_total_eval_amt
+  ) / NULLIF(d.prev_total_eval_amt, 0) * 100 - s.mean_return)
+    / NULLIF(s.std_return, 0), 2) AS z_score,
   CASE
-    WHEN ABS((d.return_pct - s.mean_return) / NULLIF(s.std_return, 0)) > {z_threshold}
+    WHEN ABS((((d.total_eval_amt - d.prev_total_eval_amt)
+      / NULLIF(d.prev_total_eval_amt, 0) * 100) - s.mean_return)
+      / NULLIF(s.std_return, 0)) >= {z_threshold}
     THEN '이상치'
     ELSE '정상'
   END AS status
 FROM daily_returns d
-JOIN stats s ON d.account_name = s.account_name
-WHERE d.return_pct IS NOT NULL
-ORDER BY ABS((d.return_pct - s.mean_return) / NULLIF(s.std_return, 0)) DESC
-LIMIT 20;
+JOIN stats s ON d.account_id = s.account_id
+WHERE d.prev_total_eval_amt IS NOT NULL
+ORDER BY ABS((((d.total_eval_amt - d.prev_total_eval_amt)
+  / NULLIF(d.prev_total_eval_amt, 0) * 100) - s.mean_return)
+  / NULLIF(s.std_return, 0)) DESC NULLS LAST
+LIMIT ?;
 ```
 
 **응답 형식**: 이상치 날짜 목록 + 해당일 변동률 + z-score
@@ -253,7 +331,7 @@ LIMIT 20;
 **구현 위치**: `server.py`에 신규 tool `get-portfolio-trend` 추가
 
 **파라미터**:
-- `account_name` (str): 계좌 서버명
+- `account_id` (str): 계좌번호(CANO). 빈값이면 현재 MCP 인스턴스의 `KIS_CANO`
 - `short_window` (int): 단기 이동평균 일수 (기본값: 7)
 - `long_window` (int): 중기 이동평균 일수 (기본값: 30)
 - `lookback_days` (int): 조회 기간 (기본값: 90)
@@ -262,38 +340,50 @@ LIMIT 20;
 ```sql
 WITH daily_snapshots AS (
   SELECT
-    account_name,
-    snapshot_time::DATE AS snap_date,
-    LAST(total_eval_amount ORDER BY snapshot_time) AS total_eval_amount
+    account_id,
+    CAST(snapshot_at AS DATE) AS snap_date,
+    ARG_MAX(total_eval_amt, snapshot_at) AS total_eval_amt
   FROM portfolio_snapshots
-  WHERE account_name = ?
-    AND snapshot_time >= CURRENT_DATE - INTERVAL '{lookback_days} days'
-  GROUP BY account_name, snap_date
+  WHERE account_id = ?
+    AND snapshot_at >= CURRENT_DATE - INTERVAL '{lookback_days} days'
+    AND total_eval_amt IS NOT NULL
+  GROUP BY account_id, snap_date
+),
+trend_rows AS (
+  SELECT
+    account_id,
+    snap_date,
+    total_eval_amt,
+    COUNT(total_eval_amt) OVER (
+      PARTITION BY account_id
+      ORDER BY snap_date
+      ROWS BETWEEN {long_window-1} PRECEDING AND CURRENT ROW
+    ) AS long_observations,
+    ROUND(AVG(total_eval_amt) OVER (
+      PARTITION BY account_id
+      ORDER BY snap_date
+      ROWS BETWEEN {short_window-1} PRECEDING AND CURRENT ROW
+    ), 0) AS short_sma,
+    ROUND(AVG(total_eval_amt) OVER (
+      PARTITION BY account_id
+      ORDER BY snap_date
+      ROWS BETWEEN {long_window-1} PRECEDING AND CURRENT ROW
+    ), 0) AS long_sma
+  FROM daily_snapshots
 )
 SELECT
+  account_id,
   snap_date,
-  total_eval_amount,
-  ROUND(AVG(total_eval_amount) OVER (
-    PARTITION BY account_name
-    ORDER BY snap_date
-    ROWS BETWEEN {short_window-1} PRECEDING AND CURRENT ROW
-  ), 0) AS sma_{short_window},
-  ROUND(AVG(total_eval_amount) OVER (
-    PARTITION BY account_name
-    ORDER BY snap_date
-    ROWS BETWEEN {long_window-1} PRECEDING AND CURRENT ROW
-  ), 0) AS sma_{long_window},
+  total_eval_amt,
+  short_sma,
+  long_sma,
   CASE
-    WHEN AVG(total_eval_amount) OVER (
-      PARTITION BY account_name ORDER BY snap_date
-      ROWS BETWEEN {short_window-1} PRECEDING AND CURRENT ROW
-    ) > AVG(total_eval_amount) OVER (
-      PARTITION BY account_name ORDER BY snap_date
-      ROWS BETWEEN {long_window-1} PRECEDING AND CURRENT ROW
-    ) THEN '상승추세'
-    ELSE '하락추세'
+    WHEN short_sma > long_sma THEN '상승추세'
+    WHEN short_sma < long_sma THEN '하락추세'
+    ELSE '중립'
   END AS trend
-FROM daily_snapshots
+FROM trend_rows
+WHERE long_observations >= {long_window}
 ORDER BY snap_date DESC;
 ```
 
@@ -303,9 +393,9 @@ ORDER BY snap_date DESC;
 
 ### 4. 구현 가이드라인 (Codex용)
 
-1. **신규 tool 추가 패턴**: 기존 `get-portfolio-history` tool의 구조를 참고. 파라미터는 `arguments` dict에서 읽고, DB 커넥션은 `kisdb.get_connection()`으로 획득 후 `.close()` 보장
+1. **신규 tool 추가 패턴**: 기존 `get-portfolio-history` tool의 구조를 참고. FastMCP 함수 파라미터로 입력을 받고, DB 커넥션은 `kisdb.get_connection()`으로 획득한다. 연결은 프로세스 싱글톤이므로 tool 내부에서 닫지 않는다.
 2. **SQL 파라미터 바인딩**: DuckDB Python API는 `?` 플레이스홀더 사용 (`conn.execute(sql, [param1, param2])`)
 3. **window 변수**: SQL 문자열 안의 `{window-1}` 같은 표현은 f-string 또는 `.format()`으로 치환 (SQL injection 위험 없는 정수값)
-4. **DataFrame 직렬화**: `df.to_dict(orient='records')`로 JSON 직렬화 후 `TextContent`로 반환
+4. **결과 직렬화**: DuckDB cursor의 `description`과 `fetchall()`로 `list[dict]`를 만들고, `date`/`datetime`은 ISO 문자열로 변환한다.
 5. **데이터 부족 처리**: 스냅샷이 window보다 적을 경우 `"데이터가 부족합니다 (현재 N일, 최소 {window}일 필요)"` 메시지 반환
-6. **db.py 수정 없이 구현**: 분석 쿼리는 server.py에서 직접 `conn.execute()` 호출. db.py는 스키마 초기화와 저장(upsert/insert) 함수만 담당
+6. **db.py 역할 경계**: 분석 쿼리는 `server.py`에서 직접 `conn.execute()` 호출. `db.py`는 스키마 초기화, 저장(upsert/insert), 기본 조회 함수만 담당

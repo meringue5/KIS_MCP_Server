@@ -19,6 +19,9 @@
         "KIS_APP_SECRET": "${KIS_APP_SECRET_RIA}",
         "KIS_CANO": "${KIS_CANO_RIA}",
         "KIS_ACCOUNT_TYPE": "REAL",
+        "KIS_DB_MODE": "motherduck",
+        "MOTHERDUCK_DATABASE": "kis_portfolio",
+        "KIS_DATA_DIR": "var",
         "MOTHERDUCK_TOKEN": "${MOTHERDUCK_TOKEN}"
       }
     },
@@ -30,6 +33,9 @@
         "KIS_APP_SECRET": "${KIS_APP_SECRET_ISA}",
         "KIS_CANO": "${KIS_CANO_ISA}",
         "KIS_ACCOUNT_TYPE": "REAL",
+        "KIS_DB_MODE": "motherduck",
+        "MOTHERDUCK_DATABASE": "kis_portfolio",
+        "KIS_DATA_DIR": "var",
         "MOTHERDUCK_TOKEN": "${MOTHERDUCK_TOKEN}"
       }
     },
@@ -42,6 +48,9 @@
         "KIS_CANO": "${KIS_CANO_IRP}",
         "KIS_ACNT_PRDT_CD": "29",
         "KIS_ACCOUNT_TYPE": "REAL",
+        "KIS_DB_MODE": "motherduck",
+        "MOTHERDUCK_DATABASE": "kis_portfolio",
+        "KIS_DATA_DIR": "var",
         "MOTHERDUCK_TOKEN": "${MOTHERDUCK_TOKEN}"
       }
     },
@@ -54,6 +63,9 @@
         "KIS_CANO": "${KIS_CANO_PENSION}",
         "KIS_ACNT_PRDT_CD": "22",
         "KIS_ACCOUNT_TYPE": "REAL",
+        "KIS_DB_MODE": "motherduck",
+        "MOTHERDUCK_DATABASE": "kis_portfolio",
+        "KIS_DATA_DIR": "var",
         "MOTHERDUCK_TOKEN": "${MOTHERDUCK_TOKEN}"
       }
     },
@@ -65,6 +77,9 @@
         "KIS_APP_SECRET": "${KIS_APP_SECRET_BROKERAGE}",
         "KIS_CANO": "${KIS_CANO_BROKERAGE}",
         "KIS_ACCOUNT_TYPE": "REAL",
+        "KIS_DB_MODE": "motherduck",
+        "MOTHERDUCK_DATABASE": "kis_portfolio",
+        "KIS_DATA_DIR": "var",
         "MOTHERDUCK_TOKEN": "${MOTHERDUCK_TOKEN}"
       }
     }

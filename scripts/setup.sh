@@ -71,6 +71,7 @@ echo ""
 echo "📦 의존성 설치 중..."
 cd "$REPO_DIR"
 uv sync 2>&1 | tail -3
+mkdir -p "$REPO_DIR/var/tokens" "$REPO_DIR/var/local" "$REPO_DIR/var/backup"
 echo "✅ 의존성 설치 완료"
 
 # ── 3. claude_desktop_config.json 생성 ────────
@@ -118,6 +119,9 @@ def srv(key_suffix, cano_key, extra_env=None):
         "KIS_APP_SECRET": env[f"KIS_APP_SECRET_{key_suffix}"],
         "KIS_CANO":       env[f"KIS_CANO_{key_suffix}"],
         "KIS_ACCOUNT_TYPE": "REAL",
+        "KIS_DB_MODE": env.get("KIS_DB_MODE", "motherduck"),
+        "MOTHERDUCK_DATABASE": env.get("MOTHERDUCK_DATABASE", "kis_portfolio"),
+        "KIS_DATA_DIR": env.get("KIS_DATA_DIR", "var"),
         "MOTHERDUCK_TOKEN": env["MOTHERDUCK_TOKEN"],
     }
     if extra_env:

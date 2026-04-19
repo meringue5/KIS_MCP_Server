@@ -1,0 +1,204 @@
+# KIS MCP Server — Codex 컨텍스트
+
+이 프로젝트는 [migusdn/KIS_MCP_Server](https://github.com/migusdn/KIS_MCP_Server)를 포크하여,
+한국투자증권 Open API를 Codex Desktop(Cowork 모드)에서 자연어로 조회하기 위해 확장한 MCP 서버입니다.
+
+---
+
+## 프로젝트 구조
+
+```
+KIS_MCP_Server/
+├── server.py          # 기존 MCP 설정 호환용 thin entrypoint
+├── db.py              # 기존 import db 호환용 wrapper
+├── src/
+│   └── kis_mcp_server/
+│       ├── app.py     # MCP 서버 본체 (tool 정의, 점진 분리 예정)
+│       └── db.py      # DuckDB/MotherDuck 연결, 스키마, 저장/조회 함수
+├── tests/             # pytest 테스트 위치
+├── docs/              # 세부 운영/설계 문서
+├── var/               # 로컬 토큰, local DB, 백업 파일 위치
+├── .env.example       # 환경변수 템플릿 (실제 값은 .env 또는 claude_desktop_config.json)
+├── AGENTS.md          # 이 파일 — Codex용 프로젝트 컨텍스트
+├── ARCHITECTURE.md    # 코드 배치와 장기 구조 원칙
+├── SPEC.md            # 요구사항 및 아키텍처 의사결정 기록
+└── pyproject.toml     # uv 기반 의존성 관리
+```
+
+---
+
+## 서버 실행 방법
+
+Codex Desktop에서 MCP로 자동 실행됨. 수동 테스트 시:
+
+```bash
+cd /Users/lvcwoo/workspace/KIS_MCP_Server
+uv run python server.py
+```
+
+---
+
+## 계좌 구성 (claude_desktop_config.json)
+
+5개 계좌가 독립적인 MCP 서버 인스턴스로 실행됨:
+
+| 서버 이름       | CANO     | ACNT_PRDT_CD | 계좌 종류     |
+|--------------|----------|-------------|------------|
+| kis-ria      | 44299692 | 01          | 위험자산 일임  |
+| kis-isa      | 43786274 | 01          | ISA        |
+| kis-brokerage| 43416048 | 01          | 일반 위탁    |
+| kis-irp      | 43362670 | 29          | IRP (퇴직연금)|
+| kis-pension  | 43286118 | 22          | 연금저축     |
+
+별도로 `kis-api-search` 서버(koreainvestment-mcp)가 API 문서 검색용으로 실행됨.
+
+---
+
+## 핵심 설계 규칙
+
+### 계좌별 토큰 파일 분리
+모든 인스턴스가 같은 디렉터리에서 실행되므로, OAuth 토큰을 계좌별로 분리:
+```python
+TOKEN_FILE = get_token_dir() / f"token_{os.environ.get('KIS_CANO', 'default')}.json"
+```
+기본 위치는 프로젝트 루트 기준 `var/tokens/token_{CANO}.json`.
+
+### IRP vs 연금저축 API 분기
+- **IRP (ACNT_PRDT_CD=29)**: 전용 pension API 사용
+  - endpoint: `/uapi/domestic-stock/v1/trading/pension/inquire-balance`
+  - TR_ID: `TTTC2208R`
+- **연금저축 (ACNT_PRDT_CD=22)**: 표준 잔고 API 사용 (MTS 화면 구조로 확인)
+  - endpoint: `/uapi/domestic-stock/v1/trading/inquire-balance`
+  - TR_ID: `TTTC8434R`
+
+```python
+is_pension = acnt_prdt_cd == "29"  # IRP만 pension API, 22(연금저축)는 표준 API
+```
+
+### 환경변수 주입 방식
+API 키와 계좌정보는 `claude_desktop_config.json`의 `env` 블록에서 주입.
+`server.py`는 `os.environ`으로만 읽으므로, `.env` + `python-dotenv`로도 대체 가능 (클라우드 배포 시).
+
+---
+
+## 트러블슈팅 기록
+
+### token.json 충돌
+- **증상**: RIA 토큰으로 ISA API 호출 → 인증 오류
+- **원인**: 5개 인스턴스가 동일 디렉터리에서 `token.json` 하나를 공유
+- **해결**: `token_{CANO}.json` 형식으로 계좌별 파일 분리
+
+### koreainvestment-mcp Python 버전 오류
+- **증상**: `uv run python server.py` 실행 시 pandas 빌드 실패
+- **원인**: Python 3.14에서 pandas 미지원
+- **해결**: `uv sync --python 3.13` 후 `--python 3.13` 플래그 명시
+
+### 연금저축 appSecret 파싱 오류
+- **증상**: 토큰 발급 실패
+- **원인**: KIS 발급 appSecret 끝에 `]` 문자 포함 (잘못된 base64)
+- **해결**: `]` 문자 제거
+
+### IRP/연금저축 "계좌 없음"
+- **증상**: `inquery-balance` 호출 시 계좌 조회 실패
+- **원인**: ACNT_PRDT_CD가 01이 아닌 계좌는 별도 처리 필요
+- **해결**: 환경변수 `KIS_ACNT_PRDT_CD` 추가 및 API 분기 로직 구현
+
+---
+
+## 관련 레포지토리
+
+| 레포 | 용도 |
+|------|------|
+| `~/workspace/KIS_MCP_Server` | **이 서버** (메인) |
+| `~/workspace/koreainvestment-mcp` | API 문서 검색용 MCP (kis-api-search) |
+| `~/workspace/stock_manager_llm` | KIS Open API 레퍼런스 코드 (참조용) |
+
+---
+
+## 데이터베이스 (MotherDuck / DuckDB)
+
+`src/kis_mcp_server/db.py`가 DB 레이어를 담당. `src/kis_mcp_server/app.py`는
+`from . import db as kisdb`로 사용. 루트 `db.py`와 `server.py`는 호환 shim.
+
+**연결 전략 (명시적 모드):**
+```python
+# 기본: MotherDuck. token이 없으면 로컬 fallback하지 않고 실패.
+KIS_DB_MODE=motherduck
+MOTHERDUCK_DATABASE=kis_portfolio
+MOTHERDUCK_TOKEN=... → md:kis_portfolio
+
+# 개발/장애 대응/백업용 local 모드
+KIS_DB_MODE=local → var/local/kis_portfolio.duckdb
+```
+
+상대경로 `KIS_DATA_DIR=var`는 현재 작업 디렉터리가 아니라 프로젝트 루트 기준으로 해석.
+
+**테이블 요약:**
+
+| 테이블 | 저장 방식 | 트리거 |
+|--------|----------|--------|
+| `price_history` | INSERT OR IGNORE | `inquery-stock-history`, `inquery-overseas-stock-history` 호출 시 |
+| `exchange_rate_history` | INSERT OR IGNORE | `inquery-exchange-rate-history` 호출 시 |
+| `portfolio_snapshots` | append-only INSERT | `inquery-balance` 호출 시 |
+| `trade_profit_history` | append-only INSERT | `inquery-period-trade-profit`, `inquery-overseas-period-profit` 호출 시 |
+
+**DB 전용 조회 툴 (API 호출 없음):**
+- `get-portfolio-history` — 계좌 잔고 스냅샷 이력
+- `get-price-from-db` — 캐시된 주가 이력
+- `get-exchange-rate-from-db` — 캐시된 환율 이력
+
+**백업:**
+- 운영 DB는 MotherDuck
+- Parquet 백업 스크립트: `uv run python scripts/backup_motherduck.py`
+- 기본 백업 위치: `var/backup/parquet/YYYYMMDD_HHMMSS/`
+
+## 신규 환경 온보딩
+
+새 맥이나 새 클론 후 Codex Desktop MCP를 복원하는 절차.
+
+### 전제조건
+- `.env` 파일: 구글드라이브 등에 안전하게 보관한 사본 복사
+- GitHub CLI (`gh`) 설치 및 `gh auth login` 완료
+- `uv` 설치: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+
+### 복원 절차
+
+```bash
+# 1. 레포 클론
+git clone https://github.com/meringue5/KIS_MCP_Server.git ~/workspace/KIS_MCP_Server
+cd ~/workspace/KIS_MCP_Server
+
+# 2. .env 파일 복사 (구글드라이브 등에서)
+cp /path/to/backup/.env .
+
+# 3. 셋업 스크립트 실행 (1회로 끝)
+bash scripts/setup.sh
+```
+
+`setup.sh`가 자동으로 처리하는 것:
+- `.env` 유효성 검사 (빠진 변수 즉시 오류)
+- `uv sync` (Python 의존성 설치)
+- `~/Library/Application Support/Codex/claude_desktop_config.json` 생성
+- 기존 설정 백업 (`claude_desktop_config.json.bak`)
+
+### 이후
+Codex Desktop 재시작 → MCP 서버 6개 자동 스폰 확인
+
+### 환경변수 레퍼런스
+`.env.example` 참고. 계좌별 변수명 패턴:
+```
+KIS_APP_KEY_{ACCOUNT}=
+KIS_APP_SECRET_{ACCOUNT}=
+KIS_CANO_{ACCOUNT}=
+```
+`{ACCOUNT}` = `RIA`, `ISA`, `IRP`, `PENSION`, `BROKERAGE`
+
+---
+
+## 예정 작업
+
+- python-dotenv 도입 (클라우드 배포 대비)
+- 볼린저 밴드 (`get-bollinger-bands` tool)
+- 이상치 탐지 (`get-portfolio-anomalies` tool)
+- 포트폴리오 추이 분석 (`get-portfolio-trend` tool)
+- 상세 구현 명세: SPEC.md의 "DuckDB 분석 플랜" 섹션 참고
