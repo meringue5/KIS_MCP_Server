@@ -38,6 +38,40 @@
 - [ ] remote read-only mode를 명시적으로 분리한다.
 - [ ] Docker build를 정상 Docker daemon 환경에서 검증한다.
 - [ ] 배포 후보(Fly.io, Render, Cloud Run)를 비교하고 1차 타겟을 정한다.
+  - 현재 운영 가설은 `Cloud Run + Cloudflare Access(+ WAF/IP allowlist)` 조합이다.
+  - Claude/remote MCP는 Anthropic cloud에서 public HTTPS endpoint로 붙으므로, private network/VPN-only 구성은 1차안에서 제외한다.
+- [ ] 원격 배포용 서비스 가입과 결제수단 준비를 끝낸다.
+  - `Google Cloud`
+    - 용도: `Cloud Run` 배포, `Artifact Registry` 컨테이너 이미지 저장, `Secret Manager` 운영 secret 저장.
+    - 가입 링크: <https://cloud.google.com/free>, 콘솔: <https://console.cloud.google.com>
+    - 월 예상 비용(개인 저사용량 기준):
+      - `Cloud Run`: 대체로 `$0-5/월` 예상. `min instances=0`이면 무료구간 안에 머물 가능성이 크다.
+      - `Secret Manager`: secret 6개까지는 free tier로 커버 가능. 현재처럼 env를 잘게 나누면 대략 `$0-2/월` 정도로 볼 것.
+      - `Artifact Registry`: 이미지가 작으면 사실상 무료에 가깝고, 0.5GB 초과분만 `GB당 $0.10/월`.
+    - 비고:
+      - remote v1은 파일 기반 토큰 캐시를 쓰므로 `max instances=1`로 시작하는 편이 안전하다.
+      - 비용은 공식 가격표 기준이며 실제 청구는 리전/트래픽/secret 개수에 따라 달라진다.
+  - `Cloudflare`
+    - 용도: `Access`로 Claude 앞단 인증, `WAF/custom rules`로 IP allowlist, custom domain 프록시.
+    - 가입 링크: <https://dash.cloudflare.com/sign-up>
+    - 제품/설정 문서:
+      - Access 가격: <https://www.cloudflare.com/plans/zero-trust-services/>
+      - Self-hosted app 보호: <https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/>
+      - Managed OAuth: <https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/>
+    - 월 예상 비용(개인 사용 기준):
+      - `Cloudflare Access Free`: 50명 미만은 `$0/월`로 시작 가능.
+      - custom domain만 쓰는 수준에서는 보통 추가 비용 없이 시작 가능.
+    - 비고:
+      - 운영 전에는 Anthropic published IP 범위를 allowlist에 넣고, 초기 설정 중에는 내 접속 IP도 임시 허용한다.
+  - `도메인 등록업체(선택)`
+    - 용도: `mcp.example.com` 같은 custom domain 연결.
+    - 월 예상 비용: 도메인 종류에 따라 다르지만 보통 `연 $10-20` 수준(`월 $1-2` 감각)으로 본다.
+    - 비고: 기존 보유 도메인이 있으면 신규 가입 없이 그대로 써도 된다.
+- [ ] 가입 전에 준비해둘 운영 메모를 정리한다.
+  - Google Cloud billing account를 먼저 열어야 `Cloud Run`, `Artifact Registry`, `Secret Manager`를 바로 켤 수 있다.
+  - Cloudflare는 계정 생성 후 `Zero Trust`와 DNS 관리를 같이 붙일 수 있는지 확인한다.
+  - 비용 절감을 위해 1차 목표는 `Cloud Run min instances=0`, `max instances=1`, `concurrency=1`로 둔다.
+  - 실제 KIS secret 개수와 주입 방식은 배포 직전에 다시 세서 `Secret Manager` 비용 추정치를 업데이트한다.
 
 ## Refactor
 
