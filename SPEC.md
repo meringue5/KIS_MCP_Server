@@ -31,8 +31,8 @@
 
 - [x] DuckDB(MotherDuck) 캐시: 주가/환율 이력 자동 저장
 - [x] DuckDB(MotherDuck) 누적 저장: 계좌 잔고 스냅샷 시계열
-- [ ] 볼린저 밴드 등 기술적 지표 분석
-- [ ] 계좌 변동 추이 분석 및 이상치 탐지
+- [ ] 볼린저 밴드 등 기술적 지표 분석 (→ [DuckDB 분석 플랜](#duckdb-분석-플랜) 참고)
+- [ ] 계좌 변동 추이 분석 및 이상치 탐지 (→ [DuckDB 분석 플랜](#duckdb-분석-플랜) 참고)
 - [ ] 클라우드 컨테이너 배포 (환경변수 .env 방식)
 
 ---
@@ -110,3 +110,202 @@ is_pension = acnt_prdt_cd == "29"
 
 ### 클라우드 배포 (예정)
 `python-dotenv`로 `.env` 파일 로드. `server.py`는 `os.environ`만 사용하므로 코드 변경 불필요.
+
+---
+
+## DuckDB 분석 플랜
+
+> 이 섹션은 Codex(또는 다른 AI 코딩 도구)에 구현을 위임하기 위한 상세 명세다.
+> 모든 쿼리는 `db.py`의 `get_connection()`으로 얻은 커넥션에서 실행한다.
+> 결과는 `.df()` 호출로 pandas DataFrame으로 변환 후 MCP tool의 응답에 포함한다.
+
+---
+
+### 1. 볼린저 밴드 (Bollinger Bands)
+
+**목적**: 특정 종목의 주가가 과매수/과매도 구간에 있는지 탐지
+
+**구현 위치**: `server.py`에 신규 tool `get-bollinger-bands` 추가
+
+**파라미터**:
+- `symbol` (str): 종목 코드 (예: `005930`)
+- `exchange` (str): `KR` 또는 `US` (기본값: `KR`)
+- `window` (int): 이동평균 기간 (기본값: 20)
+- `num_std` (float): 표준편차 배수 (기본값: 2.0)
+
+**DuckDB SQL 구현**:
+```sql
+WITH price_stats AS (
+  SELECT
+    symbol,
+    date,
+    close_price,
+    AVG(close_price) OVER (
+      PARTITION BY symbol
+      ORDER BY date
+      ROWS BETWEEN {window-1} PRECEDING AND CURRENT ROW
+    ) AS sma,
+    STDDEV(close_price) OVER (
+      PARTITION BY symbol
+      ORDER BY date
+      ROWS BETWEEN {window-1} PRECEDING AND CURRENT ROW
+    ) AS std
+  FROM price_history
+  WHERE symbol = ? AND exchange = ?
+)
+SELECT
+  symbol,
+  date,
+  close_price,
+  ROUND(sma, 2)                          AS sma_{window},
+  ROUND(sma + {num_std} * std, 2)        AS upper_band,
+  ROUND(sma - {num_std} * std, 2)        AS lower_band,
+  ROUND((close_price - sma) / NULLIF(std, 0), 2) AS z_score,
+  CASE
+    WHEN close_price > sma + {num_std} * std THEN '과매수'
+    WHEN close_price < sma - {num_std} * std THEN '과매도'
+    ELSE '중립'
+  END AS signal
+FROM price_stats
+WHERE sma IS NOT NULL  -- window 미충족 행 제외
+ORDER BY date DESC
+LIMIT 60;
+```
+
+**응답 형식 (JSON)**: 최근 60일 데이터 + 현재 signal 요약
+
+---
+
+### 2. 이상치 탐지 (Anomaly Detection) — 계좌 잔고 기반
+
+**목적**: 일별 포트폴리오 평가금액 변동률이 통계적으로 비정상적인 날을 탐지
+(급락/급등 경보, 오입력 탐지 등)
+
+**구현 위치**: `server.py`에 신규 tool `get-portfolio-anomalies` 추가
+
+**파라미터**:
+- `account_name` (str): 계좌 서버명 (예: `kis-ria`, `kis-brokerage`)
+- `z_threshold` (float): 이상치 기준 z-score (기본값: 2.0)
+- `lookback_days` (int): 분석 기간 (기본값: 90)
+
+**DuckDB SQL 구현**:
+```sql
+WITH daily_snapshots AS (
+  -- 하루에 여러 번 저장될 수 있으므로 일별 최종값만 사용
+  SELECT
+    account_name,
+    snapshot_time::DATE AS snap_date,
+    LAST(total_eval_amount ORDER BY snapshot_time) AS total_eval_amount
+  FROM portfolio_snapshots
+  WHERE account_name = ?
+    AND snapshot_time >= CURRENT_DATE - INTERVAL '{lookback_days} days'
+  GROUP BY account_name, snap_date
+),
+daily_returns AS (
+  SELECT
+    account_name,
+    snap_date,
+    total_eval_amount,
+    LAG(total_eval_amount) OVER (
+      PARTITION BY account_name ORDER BY snap_date
+    ) AS prev_amount,
+    (total_eval_amount - LAG(total_eval_amount) OVER (
+      PARTITION BY account_name ORDER BY snap_date
+    )) / NULLIF(LAG(total_eval_amount) OVER (
+      PARTITION BY account_name ORDER BY snap_date
+    ), 0) * 100 AS return_pct
+  FROM daily_snapshots
+),
+stats AS (
+  SELECT
+    account_name,
+    AVG(return_pct)    AS mean_return,
+    STDDEV(return_pct) AS std_return
+  FROM daily_returns
+  WHERE return_pct IS NOT NULL
+  GROUP BY account_name
+)
+SELECT
+  d.snap_date,
+  d.total_eval_amount,
+  ROUND(d.return_pct, 2) AS return_pct,
+  ROUND((d.return_pct - s.mean_return) / NULLIF(s.std_return, 0), 2) AS z_score,
+  CASE
+    WHEN ABS((d.return_pct - s.mean_return) / NULLIF(s.std_return, 0)) > {z_threshold}
+    THEN '이상치'
+    ELSE '정상'
+  END AS status
+FROM daily_returns d
+JOIN stats s ON d.account_name = s.account_name
+WHERE d.return_pct IS NOT NULL
+ORDER BY ABS((d.return_pct - s.mean_return) / NULLIF(s.std_return, 0)) DESC
+LIMIT 20;
+```
+
+**응답 형식**: 이상치 날짜 목록 + 해당일 변동률 + z-score
+
+---
+
+### 3. 포트폴리오 추이 분석 (Portfolio Trend)
+
+**목적**: 계좌별 자산 시계열을 단기/중기 이동평균으로 시각화, 추세 방향 판단
+
+**구현 위치**: `server.py`에 신규 tool `get-portfolio-trend` 추가
+
+**파라미터**:
+- `account_name` (str): 계좌 서버명
+- `short_window` (int): 단기 이동평균 일수 (기본값: 7)
+- `long_window` (int): 중기 이동평균 일수 (기본값: 30)
+- `lookback_days` (int): 조회 기간 (기본값: 90)
+
+**DuckDB SQL 구현**:
+```sql
+WITH daily_snapshots AS (
+  SELECT
+    account_name,
+    snapshot_time::DATE AS snap_date,
+    LAST(total_eval_amount ORDER BY snapshot_time) AS total_eval_amount
+  FROM portfolio_snapshots
+  WHERE account_name = ?
+    AND snapshot_time >= CURRENT_DATE - INTERVAL '{lookback_days} days'
+  GROUP BY account_name, snap_date
+)
+SELECT
+  snap_date,
+  total_eval_amount,
+  ROUND(AVG(total_eval_amount) OVER (
+    PARTITION BY account_name
+    ORDER BY snap_date
+    ROWS BETWEEN {short_window-1} PRECEDING AND CURRENT ROW
+  ), 0) AS sma_{short_window},
+  ROUND(AVG(total_eval_amount) OVER (
+    PARTITION BY account_name
+    ORDER BY snap_date
+    ROWS BETWEEN {long_window-1} PRECEDING AND CURRENT ROW
+  ), 0) AS sma_{long_window},
+  CASE
+    WHEN AVG(total_eval_amount) OVER (
+      PARTITION BY account_name ORDER BY snap_date
+      ROWS BETWEEN {short_window-1} PRECEDING AND CURRENT ROW
+    ) > AVG(total_eval_amount) OVER (
+      PARTITION BY account_name ORDER BY snap_date
+      ROWS BETWEEN {long_window-1} PRECEDING AND CURRENT ROW
+    ) THEN '상승추세'
+    ELSE '하락추세'
+  END AS trend
+FROM daily_snapshots
+ORDER BY snap_date DESC;
+```
+
+**응답 형식**: 날짜별 평가금액 + SMA7 + SMA30 + 추세 신호
+
+---
+
+### 4. 구현 가이드라인 (Codex용)
+
+1. **신규 tool 추가 패턴**: 기존 `get-portfolio-history` tool의 구조를 참고. 파라미터는 `arguments` dict에서 읽고, DB 커넥션은 `kisdb.get_connection()`으로 획득 후 `.close()` 보장
+2. **SQL 파라미터 바인딩**: DuckDB Python API는 `?` 플레이스홀더 사용 (`conn.execute(sql, [param1, param2])`)
+3. **window 변수**: SQL 문자열 안의 `{window-1}` 같은 표현은 f-string 또는 `.format()`으로 치환 (SQL injection 위험 없는 정수값)
+4. **DataFrame 직렬화**: `df.to_dict(orient='records')`로 JSON 직렬화 후 `TextContent`로 반환
+5. **데이터 부족 처리**: 스냅샷이 window보다 적을 경우 `"데이터가 부족합니다 (현재 N일, 최소 {window}일 필요)"` 메시지 반환
+6. **db.py 수정 없이 구현**: 분석 쿼리는 server.py에서 직접 `conn.execute()` 호출. db.py는 스키마 초기화와 저장(upsert/insert) 함수만 담당

@@ -130,8 +130,53 @@ MOTHERDUCK_TOKEN=... → md:kis_portfolio
 - `get-price-from-db` — 캐시된 주가 이력
 - `get-exchange-rate-from-db` — 캐시된 환율 이력
 
+## 신규 환경 온보딩
+
+새 맥이나 새 클론 후 Claude Desktop MCP를 복원하는 절차.
+
+### 전제조건
+- `.env` 파일: 구글드라이브 등에 안전하게 보관한 사본 복사
+- GitHub CLI (`gh`) 설치 및 `gh auth login` 완료
+- `uv` 설치: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+
+### 복원 절차
+
+```bash
+# 1. 레포 클론
+git clone https://github.com/meringue5/KIS_MCP_Server.git ~/workspace/KIS_MCP_Server
+cd ~/workspace/KIS_MCP_Server
+
+# 2. .env 파일 복사 (구글드라이브 등에서)
+cp /path/to/backup/.env .
+
+# 3. 셋업 스크립트 실행 (1회로 끝)
+bash scripts/setup.sh
+```
+
+`setup.sh`가 자동으로 처리하는 것:
+- `.env` 유효성 검사 (빠진 변수 즉시 오류)
+- `uv sync` (Python 의존성 설치)
+- `~/Library/Application Support/Claude/claude_desktop_config.json` 생성
+- 기존 설정 백업 (`claude_desktop_config.json.bak`)
+
+### 이후
+Claude Desktop 재시작 → MCP 서버 6개 자동 스폰 확인
+
+### 환경변수 레퍼런스
+`.env.example` 참고. 계좌별 변수명 패턴:
+```
+KIS_APP_KEY_{ACCOUNT}=
+KIS_APP_SECRET_{ACCOUNT}=
+KIS_CANO_{ACCOUNT}=
+```
+`{ACCOUNT}` = `RIA`, `ISA`, `IRP`, `PENSION`, `BROKERAGE`
+
+---
+
 ## 예정 작업
 
 - python-dotenv 도입 (클라우드 배포 대비)
-- 볼린저 밴드 등 기술적 지표 분석 스킬
-- 이상치 탐지 스킬
+- 볼린저 밴드 (`get-bollinger-bands` tool)
+- 이상치 탐지 (`get-portfolio-anomalies` tool)
+- 포트폴리오 추이 분석 (`get-portfolio-trend` tool)
+- 상세 구현 명세: SPEC.md의 "DuckDB 분석 플랜" 섹션 참고

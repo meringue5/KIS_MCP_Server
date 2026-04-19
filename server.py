@@ -1029,7 +1029,24 @@ async def inquery_exchange_rate_history(
                 "FID_PERIOD_DIV_CODE": period,
             },
         )
-    return response.json()
+    data = response.json()
+
+    # ── DB: 환율 이력 캐시 저장 ──
+    try:
+        output = data.get("output2") or []
+        if isinstance(output, list):
+            rows = []
+            for item in output:
+                dt = item.get("stck_bsop_date") or item.get("xymd")
+                rate = item.get("ovrs_nmix_prpr") or item.get("clos")
+                if dt and rate:
+                    rows.append({"date": dt, "rate": rate})
+            if rows:
+                kisdb.upsert_exchange_rate_history(currency, period, rows)
+    except Exception as e:
+        logger.warning(f"DB exchange_rate_history save failed (non-critical): {e}")
+
+    return data
 
 
 @mcp.tool(
