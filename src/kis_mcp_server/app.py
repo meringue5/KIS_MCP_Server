@@ -227,8 +227,8 @@ async def inquery_stock_price(symbol: str):
 async def inquery_balance():
     """
     Get current stock balance information from Korea Investment & Securities.
-    Automatically routes to pension API when KIS_ACNT_PRDT_CD is "22" (연금저축)
-    or "29" (IRP), otherwise uses standard balance API.
+    Automatically routes to the pension API only when KIS_ACNT_PRDT_CD is "29"
+    (IRP). Pension savings ("22") uses the standard balance API.
     """
     acnt_prdt_cd = os.environ.get("KIS_ACNT_PRDT_CD", "01")
     is_pension = is_irp_account(acnt_prdt_cd)  # IRP만 pension API, 연금저축("22")은 표준 API

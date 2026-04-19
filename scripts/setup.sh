@@ -18,7 +18,6 @@ set -e
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="$REPO_DIR/.env"
-EXAMPLE_CONFIG="$REPO_DIR/claude_desktop_config.example.json"
 CLAUDE_CONFIG_DIR="$HOME/Library/Application Support/Claude"
 CLAUDE_CONFIG="$CLAUDE_CONFIG_DIR/claude_desktop_config.json"
 
@@ -45,11 +44,11 @@ set +a
 
 # 필수 변수 확인
 REQUIRED=(
-  KIS_APP_KEY_RIA KIS_APP_SECRET_RIA KIS_CANO_RIA
-  KIS_APP_KEY_ISA KIS_APP_SECRET_ISA KIS_CANO_ISA
-  KIS_APP_KEY_IRP KIS_APP_SECRET_IRP KIS_CANO_IRP
-  KIS_APP_KEY_PENSION KIS_APP_SECRET_PENSION KIS_CANO_PENSION
-  KIS_APP_KEY_BROKERAGE KIS_APP_SECRET_BROKERAGE KIS_CANO_BROKERAGE
+  KIS_APP_KEY_RIA KIS_APP_SECRET_RIA KIS_CANO_RIA KIS_ACNT_PRDT_CD_RIA
+  KIS_APP_KEY_ISA KIS_APP_SECRET_ISA KIS_CANO_ISA KIS_ACNT_PRDT_CD_ISA
+  KIS_APP_KEY_IRP KIS_APP_SECRET_IRP KIS_CANO_IRP KIS_ACNT_PRDT_CD_IRP
+  KIS_APP_KEY_PENSION KIS_APP_SECRET_PENSION KIS_CANO_PENSION KIS_ACNT_PRDT_CD_PENSION
+  KIS_APP_KEY_BROKERAGE KIS_APP_SECRET_BROKERAGE KIS_CANO_BROKERAGE KIS_ACNT_PRDT_CD_BROKERAGE
   MOTHERDUCK_TOKEN
 )
 MISSING=()
@@ -113,11 +112,13 @@ repo_dir = "$REPO_DIR"
 uv_bin   = os.path.expanduser("~/.local/bin/uv")
 prefs    = $PREFS
 
-def srv(key_suffix, cano_key, extra_env=None):
+def srv(key_suffix, extra_env=None):
     e = {
         "KIS_APP_KEY":    env[f"KIS_APP_KEY_{key_suffix}"],
         "KIS_APP_SECRET": env[f"KIS_APP_SECRET_{key_suffix}"],
         "KIS_CANO":       env[f"KIS_CANO_{key_suffix}"],
+        "KIS_ACNT_PRDT_CD": env[f"KIS_ACNT_PRDT_CD_{key_suffix}"],
+        "KIS_ACCOUNT_LABEL": key_suffix.lower(),
         "KIS_ACCOUNT_TYPE": "REAL",
         "KIS_DB_MODE": env.get("KIS_DB_MODE", "motherduck"),
         "MOTHERDUCK_DATABASE": env.get("MOTHERDUCK_DATABASE", "kis_portfolio"),
@@ -141,13 +142,11 @@ config = {
                      "--python", "3.13", "python", "server.py"],
             "env": {}
         },
-        "kis-ria":       srv("RIA", "KIS_CANO_RIA"),
-        "kis-isa":       srv("ISA", "KIS_CANO_ISA"),
-        "kis-irp":       srv("IRP", "KIS_CANO_IRP",
-                             {"KIS_ACNT_PRDT_CD": "29"}),
-        "kis-pension":   srv("PENSION", "KIS_CANO_PENSION",
-                             {"KIS_ACNT_PRDT_CD": "22"}),
-        "kis-brokerage": srv("BROKERAGE", "KIS_CANO_BROKERAGE"),
+        "kis-ria":       srv("RIA"),
+        "kis-isa":       srv("ISA"),
+        "kis-irp":       srv("IRP"),
+        "kis-pension":   srv("PENSION"),
+        "kis-brokerage": srv("BROKERAGE"),
     },
     "preferences": prefs,
 }

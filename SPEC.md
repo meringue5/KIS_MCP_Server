@@ -108,7 +108,8 @@ is_pension = acnt_prdt_cd == "29"
 
 **현재 적용**:
 - 루트 `server.py`: `src/kis_mcp_server/app.py`의 `main()` 호출
-- 루트 `db.py`: `src/kis_mcp_server/db.py` re-export
+- DB 레이어: `src/kis_mcp_server/db/` 패키지
+- 루트 `db.py` 호환 wrapper는 제거. 내부/테스트 코드는 `kis_mcp_server.db`를 직접 import
 - 기본 런타임 데이터 위치는 프로젝트 루트 기준 `var`
 - 토큰 파일은 `var/tokens/token_{CANO}.json`
 - local 모드 DuckDB는 `var/local/kis_portfolio.duckdb`
@@ -194,7 +195,7 @@ KIS_DATA_DIR=var
 ## DuckDB 분석 플랜
 
 > 이 섹션은 Codex(또는 다른 AI 코딩 도구)에 구현을 위임하기 위한 상세 명세다.
-> 모든 쿼리는 `db.py`의 `get_connection()`으로 얻은 커넥션에서 실행한다.
+> 모든 쿼리는 `kis_mcp_server.db.get_connection()`으로 얻은 커넥션에서 실행한다.
 > 결과는 DuckDB cursor 결과를 JSON 직렬화 가능한 `list[dict]`로 변환해 MCP tool의 응답에 포함한다.
 
 ---
@@ -418,4 +419,4 @@ ORDER BY snap_date DESC;
 3. **window 변수**: SQL 문자열 안의 `{window-1}` 같은 표현은 f-string 또는 `.format()`으로 치환 (SQL injection 위험 없는 정수값)
 4. **결과 직렬화**: DuckDB cursor의 `description`과 `fetchall()`로 `list[dict]`를 만들고, `date`/`datetime`은 ISO 문자열로 변환한다.
 5. **데이터 부족 처리**: 스냅샷이 window보다 적을 경우 `"데이터가 부족합니다 (현재 N일, 최소 {window}일 필요)"` 메시지 반환
-6. **db.py 역할 경계**: 분석 쿼리는 `server.py`에서 직접 `conn.execute()` 호출. `db.py`는 스키마 초기화, 저장(upsert/insert), 기본 조회 함수만 담당
+6. **DB 패키지 역할 경계**: 분석 쿼리는 analytics 모듈에서 실행. `kis_mcp_server.db`는 연결, 스키마 초기화, 저장(upsert/insert), 기본 조회 함수만 담당

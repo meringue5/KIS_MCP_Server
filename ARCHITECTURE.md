@@ -10,8 +10,8 @@
 디렉터리로 분리한다.
 
 현재 MCP Desktop 설정은 레포 루트의 `server.py`를 직접 실행하므로, 루트의
-`server.py`와 `db.py`는 당분간 호환 shim으로 유지한다. 실제 구현은
-`src/kis_mcp_server/` 아래에 둔다.
+`server.py`만 호환 진입점으로 유지한다. 실제 구현은 `src/kis_mcp_server/`
+아래에 둔다.
 
 ```text
 KIS_MCP_Server/
@@ -21,12 +21,11 @@ KIS_MCP_Server/
 ├── AGENTS.md
 ├── pyproject.toml
 ├── server.py                  # 기존 MCP 설정 호환용 thin entrypoint
-├── db.py                      # 기존 import db 호환용 wrapper
 ├── src/
 │   └── kis_mcp_server/
 │       ├── __init__.py
 │       ├── app.py             # MCP app, tool 등록, 현재 main 구현
-│       └── db.py              # DuckDB/MotherDuck 연결, 스키마, repository 함수
+│       └── db/                # DuckDB/MotherDuck 연결, 스키마, repository 함수
 ├── tests/                     # pytest 기반 테스트 위치
 ├── scripts/                   # 설치/점검/운영 스크립트
 ├── docs/                      # 세부 운영/설계 문서
@@ -38,9 +37,9 @@ KIS_MCP_Server/
 이번 구조 정리는 1단계 마이그레이션이다.
 
 - 기존 `server.py` 구현을 `src/kis_mcp_server/app.py`로 이동했다.
-- 기존 `db.py` 구현을 `src/kis_mcp_server/db.py`로 이동했다.
+- 기존 `db.py` 구현을 `src/kis_mcp_server/db/` 패키지로 분리했다.
 - 루트 `server.py`는 `kis_mcp_server.app.main()`을 호출한다.
-- 루트 `db.py`는 `kis_mcp_server.db`를 re-export한다.
+- 루트 `db.py` 호환 wrapper는 제거했다. 내부 코드는 `kis_mcp_server.db`를 직접 import한다.
 - MotherDuck을 기본 운영 DB로 사용한다 (`KIS_DB_MODE=motherduck`).
 - 로컬 DuckDB는 `KIS_DB_MODE=local`일 때만 사용하며 운영 트랜잭션 중심이 아니다.
 - `KIS_DATA_DIR` 기본값은 프로젝트 루트 기준 `var`이다.

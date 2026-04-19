@@ -12,10 +12,21 @@ def test_is_irp_account_only_product_code_29():
     assert is_irp_account("01") is False
 
 
-def test_infer_account_type_prefers_known_cano():
-    assert infer_account_type("44299692", "01") == "ria"
-    assert infer_account_type("43786274", "01") == "isa"
-    assert infer_account_type("43362670", "01") == "irp"
+def test_infer_account_type_prefers_configured_cano(monkeypatch):
+    monkeypatch.setenv("KIS_CANO_RIA", "11111111")
+    monkeypatch.setenv("KIS_CANO_ISA", "22222222")
+    monkeypatch.setenv("KIS_CANO_IRP", "33333333")
+
+    assert infer_account_type("11111111", "01") == "ria"
+    assert infer_account_type("22222222", "01") == "isa"
+    assert infer_account_type("33333333", "01") == "irp"
+
+
+def test_infer_account_type_prefers_current_instance_label(monkeypatch):
+    monkeypatch.setenv("KIS_CANO", "99999999")
+    monkeypatch.setenv("KIS_ACCOUNT_LABEL", "isa")
+
+    assert infer_account_type("99999999", "01") == "isa"
 
 
 def test_infer_account_type_falls_back_to_product_code():

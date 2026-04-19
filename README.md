@@ -63,7 +63,9 @@ mcp install server.py \
     -v KIS_APP_KEY={KIS_APP_KEY} \
     -v KIS_APP_SECRET={KIS_APP_SECRET} \
     -v KIS_ACCOUNT_TYPE={KIS_ACCOUNT_TYPE} \
-    -v KIS_CANO={KIS_CANO}
+    -v KIS_CANO={KIS_CANO} \
+    -v KIS_ACNT_PRDT_CD={KIS_ACNT_PRDT_CD} \
+    -v KIS_ACCOUNT_LABEL={KIS_ACCOUNT_LABEL}
 ```
 
 ### MCP Server Configuration
@@ -91,7 +93,9 @@ You can also configure the MCP server using a JSON configuration file. Create a 
         "KIS_APP_KEY": "your_app_key",
         "KIS_APP_SECRET": "your_secret_key",
         "KIS_ACCOUNT_TYPE": "VIRTUAL",
-        "KIS_CANO": "your_account_number"
+        "KIS_CANO": "your_account_number",
+        "KIS_ACNT_PRDT_CD": "01",
+        "KIS_ACCOUNT_LABEL": "brokerage"
       }
     }
   }
@@ -161,6 +165,10 @@ This configuration can be used with MCP-compatible tools and IDEs to run the ser
 * `KIS_APP_SECRET`: 한국투자증권 시크릿키
 * `KIS_ACCOUNT_TYPE`: 계좌 타입 ("REAL" 또는 "VIRTUAL")
 * `KIS_CANO`: 계좌번호
+* `KIS_ACNT_PRDT_CD`: 계좌상품코드 (예: 일반/ISA 01, IRP 29, 연금저축 22)
+* `KIS_ACCOUNT_LABEL`: 계좌 구분 라벨 (예: `ria`, `isa`, `irp`, `pension`, `brokerage`; `scripts/setup.sh`가 생성)
+
+계좌별 환경변수 템플릿은 `.env.example`, MCP 설정 예시는 `docs/examples/claude_desktop_config.example.json`을 참고하세요.
 
 ### Trading Hours
 

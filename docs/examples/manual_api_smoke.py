@@ -1,7 +1,14 @@
+"""Manual KIS API smoke script.
+
+This is not a pytest test. It calls the live KIS API using the current
+environment. Order tests are skipped unless KIS_ENABLE_ORDER_TESTS=true.
+"""
+
 import asyncio
 import json
+import os
 from datetime import datetime, timedelta
-from server import (
+from kis_mcp_server.app import (
     inquery_stock_price,
     inquery_balance,
     order_stock,
@@ -140,15 +147,6 @@ async def test_stock_ask():
     except Exception as e:
         print(f"Error testing stock ask: {e}")
 
-async def test_stock_market():
-    """Test stock market index inquiry"""
-    try:
-        result = await inquery_stock_market()
-        print("\nStock Market Response:")
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-    except Exception as e:
-        print(f"Error testing stock market: {e}")
-
 async def main():
     """Run all tests"""
     print("Starting KIS MCP Server tests...")
@@ -156,16 +154,17 @@ async def main():
     # Domestic stock tests
     await test_domestic_stock("005930", "Samsung Electronics")
     await test_balance()
-    await test_order_stock()
     await test_order_list()
     await test_order_detail()
     await test_stock_info()
     await test_stock_history()
     await test_stock_ask()
-    await test_stock_market()
     
-    # Overseas stock tests
-    await test_overseas_order()
+    if os.environ.get("KIS_ENABLE_ORDER_TESTS") == "true":
+        await test_order_stock()
+        await test_overseas_order()
+    else:
+        print("\nSkipping order tests. Set KIS_ENABLE_ORDER_TESTS=true to run them.")
     
     print("\nAll tests completed!")
 
