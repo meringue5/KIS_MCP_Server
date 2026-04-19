@@ -1,9 +1,12 @@
-# KIS MCP Server — 요구사항 및 아키텍처 의사결정
+# KIS Portfolio Service — 요구사항 및 아키텍처 의사결정
 
 ## 프로젝트 목표
 
-한국투자증권(KIS) Open API를 Claude Desktop에서 자연어로 조회·분석할 수 있는 MCP 서버 구축.
-단순 API 게이트웨이를 넘어, 로컬 데이터베이스 기반의 이력 관리 및 분석 플랫폼으로 확장.
+한국투자증권(KIS) Open API를 기반으로 개인 포트폴리오 조회, 이력 저장, 분석, 향후 원격 접근을
+제공하는 서비스 구축.
+
+MCP는 이 서비스의 주요 인터페이스 중 하나이며, 프로젝트의 중심은 MCP tool 자체가 아니라
+KIS API client, 계좌 오케스트레이션, MotherDuck 기반 데이터 저장/분석, 보안 정책이다.
 
 ---
 
@@ -227,6 +230,32 @@ KIS_DATA_DIR=var
 - `get-account-balance`: 단일 계좌 잔고 조회 및 스냅샷 저장
 - `refresh-all-account-snapshots`: 전체 계좌 순차 조회 및 계좌별 성공/실패 반환
 - `get-latest-portfolio-summary`, `get-portfolio-daily-change`: 기존 DB-only 분석 tool 재노출
+
+---
+
+### ADR-011: Forked MCP에서 KIS API 기반 포트폴리오 서비스로 설계 기준 전환
+
+**결정**: 신규 기능 설계의 primary source를 fork 원본 MCP 구현이 아니라 한국투자 공식 Open API
+문서와 공식 예제 저장소로 둔다. 기존 fork는 출처, 초기 구현 자산, 일부 회귀 호환성 기준으로만 유지한다.
+
+**이유**:
+- 요구사항의 중심이 단일 MCP tool 묶음에서 다계좌 포트폴리오 서비스, 데이터 적재, 분석, 원격 배포로 이동함
+- 계좌 오케스트레이션, MotherDuck, token audit, 조회-only remote MCP는 fork 원본보다 우리 도메인 요구가 강함
+- KIS API 문서가 주문/계좌, 기본시세, 종목정보, 실시간시세, OAuth 등 capability 경계를 제공함
+- MCP, HTTP, batch job은 같은 core service를 호출하는 adapter로 분리하는 편이 장기 유지보수에 적합함
+
+**현재 적용**:
+- 오케스트레이터 `kis-portfolio`를 장기 primary MCP로 삼고, 계좌별 MCP 5개는 병행 전환 기간 동안 유지
+- 신규 API 기능은 `docs/api-capability-map.md`의 capability map에 먼저 위치시킨 뒤 구현
+- 공식 KIS 예제는 endpoint/파라미터/종목 마스터 처리의 참조 구현으로 사용
+- README와 문서는 fork attribution을 남기되, 프로젝트 설명은 포트폴리오 서비스 중심으로 전환
+
+**저장소 전략**:
+- 당장은 기존 저장소와 git history를 유지한다.
+- 구조 전환이 충분히 진행되어 upstream MCP와의 병합 가능성이 실질적으로 사라지면 GitHub repository rename을
+  우선 검토한다.
+- 새 repository 생성은 공개 배포/브랜딩을 완전히 분리하거나, 기존 fork 관계를 GitHub UI상에서도 끊어야 할
+  명확한 이유가 있을 때 선택한다.
 
 ---
 
