@@ -71,6 +71,10 @@ bash scripts/stop_mcp.sh
 native skill discovery를 지원하지 않는 환경에서도 관련 작업 전에는 해당 `SKILL.md`를 읽고 따른다.
 
 - `.agent/skills/kis-portfolio-ops/SKILL.md`: 포트폴리오 조회, 합산, 변화 분석 운용 절차
+- `.agent/skills/kis-architecture-audit/SKILL.md`: SPEC/ARCHITECTURE/코드 구조 계약 정합성 점검
+- `.agent/skills/kis-mcp-surface-audit/SKILL.md`: public MCP tool catalog와 응답 안전성 점검
+- `.agent/skills/kis-api-capability-implementation/SKILL.md`: KIS Open API 신규 기능 추가 절차
+- `.agent/skills/kis-warehouse-contract/SKILL.md`: MotherDuck/DuckDB schema, repository, backup 계약 점검
 
 ### 계좌별 토큰 파일 분리
 모든 인스턴스가 같은 디렉터리에서 실행되므로, OAuth 토큰을 계좌별로 분리:
