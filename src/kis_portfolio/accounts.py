@@ -52,6 +52,8 @@ def to_int(value: Any) -> int | None:
 def extract_total_eval_amt(balance_response: dict) -> int | None:
     """Extract total evaluated amount from known KIS balance response fields."""
     output2 = balance_response.get("output2", {})
+    if isinstance(output2, list):
+        output2 = output2[0] if output2 else {}
     if not isinstance(output2, dict):
         return None
 
@@ -59,5 +61,7 @@ def extract_total_eval_amt(balance_response: dict) -> int | None:
         output2.get("tot_evlu_amt")
         or output2.get("scts_evlu_amt")
         or output2.get("tot_asst_amt")
+        or output2.get("evlu_amt_smtl_amt")
+        or output2.get("dnca_tot_amt")
         or output2.get("dnca_tota")
     )

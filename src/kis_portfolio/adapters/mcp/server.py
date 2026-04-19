@@ -14,6 +14,12 @@ from kis_portfolio.account_registry import (
     scoped_account_env,
 )
 from kis_portfolio.analytics.bollinger import get_bollinger_bands as analyze_bollinger_bands
+from kis_portfolio.analytics.asset_overview import (
+    get_total_asset_allocation_history as analyze_total_asset_allocation_history,
+    get_total_asset_daily_change as analyze_total_asset_daily_change,
+    get_total_asset_history as analyze_total_asset_history,
+    get_total_asset_trend as analyze_total_asset_trend,
+)
 from kis_portfolio.analytics.portfolio import (
     get_latest_portfolio_summary as analyze_latest_portfolio_summary,
     get_portfolio_anomalies as analyze_portfolio_anomalies,
@@ -23,6 +29,7 @@ from kis_portfolio.analytics.portfolio import (
 from kis_portfolio.auth import get_token_status as inspect_token_status
 from kis_portfolio.services import kis_api
 from kis_portfolio.services.account import fetch_balance_snapshot
+from kis_portfolio.services.overview import build_total_asset_overview
 
 
 logger = logging.getLogger("kis-portfolio-mcp")
@@ -100,23 +107,25 @@ async def get_all_token_statuses():
 
 @mcp.tool(
     name="get-account-balance",
-    description="지정한 계좌 라벨의 현재 잔고를 조회하고 MotherDuck에 스냅샷을 저장합니다.",
+    description="지정한 단일 계좌 라벨의 현재 잔고를 조회하고 MotherDuck에 스냅샷을 저장합니다. 전체 자산현황에는 refresh-all-account-snapshots를 우선 사용합니다.",
 )
 async def get_account_balance(account_label: str):
     account = get_account(account_label)
     with scoped_account_env(account):
         result = await fetch_balance_snapshot(save_snapshot=True, return_metadata=True)
+    saved_snapshot_id = result.get("saved_snapshot_id")
     return _wrap_raw(
         result["raw"],
         account=account,
         source="kis_api",
-        saved_snapshot_id=result.get("saved_snapshot_id"),
+        saved_snapshot_id=saved_snapshot_id,
+        snapshot_status="saved" if saved_snapshot_id else "not_saved",
     )
 
 
 @mcp.tool(
     name="refresh-all-account-snapshots",
-    description="모든 등록 계좌 잔고를 순차 조회하고 MotherDuck에 스냅샷을 저장합니다.",
+    description="전체 자산현황/전체 계좌/내 포트폴리오 요청에 우선 사용할 도구입니다. 모든 등록 계좌 잔고를 순차 조회하고 MotherDuck에 스냅샷을 저장합니다.",
 )
 async def refresh_all_account_snapshots():
     results = []
@@ -124,12 +133,14 @@ async def refresh_all_account_snapshots():
         try:
             with scoped_account_env(account):
                 result = await fetch_balance_snapshot(save_snapshot=True, return_metadata=True)
+            saved_snapshot_id = result.get("saved_snapshot_id")
             results.append(
                 _wrap_raw(
                     result["raw"],
                     account=account,
                     source="kis_api",
-                    saved_snapshot_id=result.get("saved_snapshot_id"),
+                    saved_snapshot_id=saved_snapshot_id,
+                    snapshot_status="saved" if saved_snapshot_id else "not_saved",
                 )
             )
         except Exception as e:
@@ -147,6 +158,122 @@ async def refresh_all_account_snapshots():
         "error_count": sum(1 for row in results if row["status"] == "error"),
         "accounts": results,
     }
+
+
+@mcp.tool(
+    name="get-total-asset-overview",
+    description="전체 자산현황, 국내/해외 비중, 환율 반영 총자산, 파이차트용 allocation 데이터를 반환합니다. raw KIS 응답 대신 요약/비율을 우선 제공합니다.",
+)
+async def get_total_asset_overview(
+    refresh: bool = True,
+    save_snapshot: bool = True,
+    overseas_account_label: str = DEFAULT_ACCOUNT_LABEL,
+    top_n: int = 10,
+    include_raw: bool = False,
+):
+    accounts = load_account_registry()
+    refresh_status = {"requested": refresh}
+    if refresh:
+        refresh_result = await refresh_all_account_snapshots()
+        refresh_status.update({
+            "count": refresh_result.get("count", 0),
+            "success_count": refresh_result.get("success_count", 0),
+            "error_count": refresh_result.get("error_count", 0),
+            "snapshot_status_counts": {
+                "saved": sum(
+                    1 for row in refresh_result.get("accounts", [])
+                    if row.get("snapshot_status") == "saved"
+                ),
+                "not_saved": sum(
+                    1 for row in refresh_result.get("accounts", [])
+                    if row.get("snapshot_status") == "not_saved"
+                ),
+            },
+        })
+
+    con = kisdb.get_connection()
+    portfolio_summary = analyze_latest_portfolio_summary(con, "", 30)
+    overseas_account = get_account(_account_label(overseas_account_label), accounts)
+    domestic_snapshot_rows = []
+    domestic_symbols: list[str] = []
+    for account in accounts:
+        rows = kisdb.get_portfolio_snapshots(account.cano, limit=1)
+        if not rows:
+            continue
+        row = rows[0]
+        row["account"] = account.public_dict()
+        row["account_label"] = account.label
+        domestic_snapshot_rows.append(row)
+        for holding in row.get("balance_data", {}).get("output1") or []:
+            if isinstance(holding, dict) and holding.get("pdno"):
+                domestic_symbols.append(str(holding["pdno"]).strip())
+    instrument_map = kisdb.get_instrument_master_map(sorted(set(domestic_symbols)))
+    override_map = kisdb.get_classification_override_map(sorted(set(domestic_symbols)))
+
+    errors = []
+    overseas_balance = {}
+    overseas_deposit = {}
+    with scoped_account_env(overseas_account):
+        try:
+            overseas_balance = await kis_api.inquery_overseas_balance("ALL")
+        except Exception as e:
+            logger.warning("Overseas balance fetch failed for overview: %s", e)
+            errors.append({"tool": "get-overseas-balance", "error": str(e)})
+        try:
+            overseas_deposit = await kis_api.inquery_overseas_deposit("01", "000")
+        except Exception as e:
+            logger.warning("Overseas deposit fetch failed for overview: %s", e)
+            errors.append({"tool": "get-overseas-deposit", "error": str(e)})
+
+    overview = build_total_asset_overview(
+        portfolio_summary=portfolio_summary,
+        overseas_balance=overseas_balance,
+        overseas_deposit=overseas_deposit,
+        accounts=accounts,
+        overseas_account=overseas_account,
+        top_n=top_n,
+        include_raw=include_raw,
+        domestic_snapshot_rows=domestic_snapshot_rows,
+        instrument_map=instrument_map,
+        override_map=override_map,
+    )
+    normalized_holdings = overview.pop("_normalized_holdings", [])
+    overview["refresh"] = refresh_status
+    overview["status"] = "partial_error" if errors else "ok"
+    if errors:
+        overview["errors"] = errors
+    if save_snapshot:
+        overseas_snapshot_id = kisdb.insert_overseas_asset_snapshot(
+            overseas_account.cano,
+            overseas_account.label,
+            overview["totals"].get("overseas_stock_eval_amt_krw"),
+            overview["totals"].get("overseas_cash_amt_krw"),
+            overview["totals"].get("overseas_total_asset_amt_krw"),
+            overview["overseas"].get("fx_rates"),
+            overseas_balance,
+            overseas_deposit,
+        )
+        overview_snapshot_id = kisdb.insert_asset_overview_snapshot(
+            overview["totals"],
+            overview["allocation"],
+            overview["classification_summary"],
+            overview,
+        )
+        holding_count = kisdb.insert_asset_holding_snapshots(overview_snapshot_id, normalized_holdings)
+        overview["saved_snapshot_id"] = overview_snapshot_id
+        overview["overseas_snapshot_id"] = overseas_snapshot_id
+        overview["holding_snapshot_count"] = holding_count
+        overview["snapshot_status"] = "saved"
+    else:
+        overview["snapshot_status"] = "not_saved"
+    overview["used_tools"] = [
+        "refresh-all-account-snapshots" if refresh else None,
+        "get-latest-portfolio-summary",
+        "get-overseas-balance",
+        "get-overseas-deposit",
+    ]
+    overview["used_tools"] = [tool for tool in overview["used_tools"] if tool]
+    return overview
 
 
 @mcp.tool(name="get-stock-price", description="국내주식 현재가를 조회합니다.")
@@ -307,7 +434,7 @@ async def submit_overseas_stock_order(
     return _disabled_order_response("overseas_stock")
 
 
-@mcp.tool(name="get-portfolio-history", description="MotherDuck DB에서 계좌 잔고 스냅샷 이력을 조회합니다.")
+@mcp.tool(name="get-portfolio-history", description="MotherDuck DB에서 국내/연금 계좌 feeder 스냅샷 이력을 조회합니다. 글로벌 총자산 이력에는 get-total-asset-history를 사용합니다.")
 async def get_portfolio_history(
     account_label: str = DEFAULT_ACCOUNT_LABEL,
     start_date: str = "",
@@ -356,7 +483,7 @@ async def get_bollinger_bands(
     return analyze_bollinger_bands(con, symbol, exchange, window, num_std, limit)
 
 
-@mcp.tool(name="get-latest-portfolio-summary", description="최신 스냅샷 기준 포트폴리오 합산 요약을 반환합니다.")
+@mcp.tool(name="get-latest-portfolio-summary", description="최신 MotherDuck 국내/연금 feeder 스냅샷 기준 합산 요약을 반환합니다. 글로벌 총자산 요약에는 get-total-asset-overview를 사용합니다.")
 async def get_latest_portfolio_summary(
     account_label: str = "",
     lookback_days: int = 30,
@@ -365,7 +492,7 @@ async def get_latest_portfolio_summary(
     return analyze_latest_portfolio_summary(con, _account_id_from_label(account_label), lookback_days)
 
 
-@mcp.tool(name="get-portfolio-daily-change", description="일별 대표 스냅샷 기준 평가금액 변화를 계산합니다.")
+@mcp.tool(name="get-portfolio-daily-change", description="일별 대표 국내/연금 feeder 스냅샷 기준 평가금액 변화를 계산합니다. 글로벌 총자산 변화에는 get-total-asset-daily-change를 사용합니다.")
 async def get_portfolio_daily_change(
     account_label: str = "",
     days: int = 14,
@@ -374,7 +501,7 @@ async def get_portfolio_daily_change(
     return analyze_portfolio_daily_change(con, _account_id_from_label(account_label), days)
 
 
-@mcp.tool(name="get-portfolio-anomalies", description="일별 평가금액 변동 이상치를 탐지합니다.")
+@mcp.tool(name="get-portfolio-anomalies", description="일별 국내/연금 feeder 스냅샷 기준 평가금액 변동 이상치를 탐지합니다.")
 async def get_portfolio_anomalies(
     account_label: str = "",
     z_threshold: float = 2.0,
@@ -391,7 +518,7 @@ async def get_portfolio_anomalies(
     )
 
 
-@mcp.tool(name="get-portfolio-trend", description="일별 평가금액 이동평균과 추세를 계산합니다.")
+@mcp.tool(name="get-portfolio-trend", description="일별 국내/연금 feeder 스냅샷 기준 평가금액 이동평균과 추세를 계산합니다.")
 async def get_portfolio_trend(
     account_label: str = "",
     short_window: int = 7,
@@ -406,6 +533,41 @@ async def get_portfolio_trend(
         long_window,
         lookback_days,
     )
+
+
+@mcp.tool(name="get-total-asset-history", description="canonical 총자산 스냅샷 이력을 조회합니다.")
+async def get_total_asset_history(
+    days: int = 30,
+    limit: int = 60,
+):
+    con = kisdb.get_connection()
+    return analyze_total_asset_history(con, days, limit)
+
+
+@mcp.tool(name="get-total-asset-daily-change", description="canonical 총자산 일별 변화량을 계산합니다.")
+async def get_total_asset_daily_change(
+    days: int = 14,
+):
+    con = kisdb.get_connection()
+    return analyze_total_asset_daily_change(con, days)
+
+
+@mcp.tool(name="get-total-asset-trend", description="canonical 총자산 이동평균과 추세를 계산합니다.")
+async def get_total_asset_trend(
+    short_window: int = 7,
+    long_window: int = 30,
+    lookback_days: int = 90,
+):
+    con = kisdb.get_connection()
+    return analyze_total_asset_trend(con, short_window, long_window, lookback_days)
+
+
+@mcp.tool(name="get-total-asset-allocation-history", description="canonical 총자산의 국내/해외/해외우회투자/현금 비중 이력을 조회합니다.")
+async def get_total_asset_allocation_history(
+    days: int = 30,
+):
+    con = kisdb.get_connection()
+    return analyze_total_asset_allocation_history(con, days)
 
 
 def main() -> None:

@@ -16,14 +16,16 @@ from ..clients.kis import AUTH_TYPE, CONTENT_TYPE, DOMAIN, VIRTUAL_DOMAIN
 from .account import fetch_balance_snapshot
 from .. import db as kisdb
 
-# 로깅 설정: 반드시 stderr로 출력
+# 로깅 설정: 반드시 stderr로 출력. 기본값은 계좌번호가 포함된 HTTP URL을 남기지 않도록 INFO로 둔다.
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=os.environ.get("KIS_LOG_LEVEL", "INFO").upper(),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stderr)
     ]
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger("mcp-server")
 

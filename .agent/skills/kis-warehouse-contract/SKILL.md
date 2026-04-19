@@ -16,19 +16,31 @@ Use this skill for DB schema, repository, analytics, backup, and pipeline change
    uv run python .agent/skills/kis-warehouse-contract/scripts/check_warehouse_contracts.py
    ```
 
-3. Run DB/analytics tests:
+3. For live DB inspection, run the bundled client. It prints table counts,
+   latest timestamps, account types, and null aggregate counts without account ids
+   or secrets:
+
+   ```bash
+   uv run python .agent/skills/kis-warehouse-contract/scripts/inspect_portfolio_db.py
+   ```
+
+4. Run DB/analytics tests:
 
    ```bash
    uv run pytest tests/test_analytics.py tests/test_package_smoke.py
    ```
 
-4. Update docs whenever schema, view, backup, or repository behavior changes.
+5. Update docs whenever schema, view, backup, or repository behavior changes.
 
 ## Rules
 
 - `portfolio_snapshots` and `trade_profit_history` are append-only raw observations.
+- `overseas_asset_snapshots` is append-only overseas raw/aggregate feeder storage.
+- `asset_overview_snapshots` is the canonical total-asset aggregate store.
+- `asset_holding_snapshots` is the normalized holding row store for canonical snapshots.
 - `price_history` and `exchange_rate_history` are cache tables with insert-ignore/upsert behavior.
 - Curated views and analytics must not mutate raw tables.
+- `asset_overview_daily_snapshots` must remain derived from canonical snapshots, not ad hoc recomputation.
 - Token values and app secrets must never enter MotherDuck tables.
 - Parquet backup docs and backup script must stay aligned with core tables.
 

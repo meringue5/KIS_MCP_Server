@@ -56,6 +56,102 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
     """)
 
     con.execute("""
+        CREATE TABLE IF NOT EXISTS overseas_asset_snapshots (
+            id          VARCHAR NOT NULL DEFAULT gen_random_uuid(),
+            account_id  VARCHAR NOT NULL,
+            account_type VARCHAR NOT NULL,
+            snapshot_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            stock_eval_amt_krw BIGINT,
+            cash_amt_krw BIGINT,
+            total_asset_amt_krw BIGINT,
+            fx_data     JSON,
+            balance_data JSON,
+            deposit_data JSON,
+            PRIMARY KEY (id)
+        )
+    """)
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS asset_overview_snapshots (
+            id          VARCHAR NOT NULL DEFAULT gen_random_uuid(),
+            snapshot_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            base_currency VARCHAR NOT NULL DEFAULT 'KRW',
+            domestic_eval_amt_krw BIGINT,
+            overseas_stock_eval_amt_krw BIGINT,
+            overseas_cash_amt_krw BIGINT,
+            overseas_total_asset_amt_krw BIGINT,
+            total_eval_amt_krw BIGINT,
+            domestic_pct DOUBLE,
+            overseas_pct DOUBLE,
+            overseas_stock_pct DOUBLE,
+            overseas_cash_pct DOUBLE,
+            domestic_direct_amt_krw BIGINT,
+            overseas_direct_amt_krw BIGINT,
+            overseas_indirect_amt_krw BIGINT,
+            cash_amt_krw BIGINT,
+            unknown_amt_krw BIGINT,
+            allocation_data JSON,
+            classification_summary JSON,
+            overview_data JSON,
+            PRIMARY KEY (id)
+        )
+    """)
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS asset_holding_snapshots (
+            id          VARCHAR NOT NULL DEFAULT gen_random_uuid(),
+            overview_snapshot_id VARCHAR NOT NULL,
+            snapshot_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            account_label VARCHAR,
+            account_type VARCHAR,
+            symbol      VARCHAR,
+            name        VARCHAR,
+            market      VARCHAR,
+            basis_category VARCHAR,
+            exposure_type VARCHAR,
+            exposure_region VARCHAR,
+            asset_subtype VARCHAR,
+            confidence  VARCHAR,
+            quantity    DOUBLE,
+            value_krw   BIGINT,
+            value_foreign DOUBLE,
+            currency    VARCHAR,
+            raw_data    JSON,
+            PRIMARY KEY (id)
+        )
+    """)
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS instrument_master (
+            symbol      VARCHAR NOT NULL,
+            market      VARCHAR NOT NULL,
+            standard_code VARCHAR,
+            name        VARCHAR,
+            group_code  VARCHAR,
+            etp_code    VARCHAR,
+            idx_large_code VARCHAR,
+            idx_mid_code VARCHAR,
+            idx_small_code VARCHAR,
+            raw_data    JSON,
+            updated_at  TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            PRIMARY KEY (symbol, market)
+        )
+    """)
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS instrument_classification_overrides (
+            symbol      VARCHAR NOT NULL,
+            market      VARCHAR NOT NULL DEFAULT 'KRX',
+            exposure_type VARCHAR NOT NULL,
+            exposure_region VARCHAR,
+            asset_subtype VARCHAR,
+            reason      VARCHAR,
+            updated_at  TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            PRIMARY KEY (symbol, market)
+        )
+    """)
+
+    con.execute("""
         CREATE TABLE IF NOT EXISTS trade_profit_history (
             id          VARCHAR NOT NULL DEFAULT gen_random_uuid(),
             account_id  VARCHAR NOT NULL,
@@ -91,4 +187,33 @@ def create_curated_views(con: duckdb.DuckDBPyConnection) -> None:
         FROM portfolio_snapshots
         WHERE total_eval_amt IS NOT NULL
         GROUP BY account_id, account_type, snap_date
+    """)
+
+    con.execute("""
+        CREATE OR REPLACE VIEW asset_overview_daily_snapshots AS
+        SELECT
+            CAST(snapshot_at AS DATE) AS snap_date,
+            arg_max(id, snapshot_at) AS id,
+            arg_max(snapshot_at, snapshot_at) AS snapshot_at,
+            arg_max(base_currency, snapshot_at) AS base_currency,
+            arg_max(domestic_eval_amt_krw, snapshot_at) AS domestic_eval_amt_krw,
+            arg_max(overseas_stock_eval_amt_krw, snapshot_at) AS overseas_stock_eval_amt_krw,
+            arg_max(overseas_cash_amt_krw, snapshot_at) AS overseas_cash_amt_krw,
+            arg_max(overseas_total_asset_amt_krw, snapshot_at) AS overseas_total_asset_amt_krw,
+            arg_max(total_eval_amt_krw, snapshot_at) AS total_eval_amt_krw,
+            arg_max(domestic_pct, snapshot_at) AS domestic_pct,
+            arg_max(overseas_pct, snapshot_at) AS overseas_pct,
+            arg_max(overseas_stock_pct, snapshot_at) AS overseas_stock_pct,
+            arg_max(overseas_cash_pct, snapshot_at) AS overseas_cash_pct,
+            arg_max(domestic_direct_amt_krw, snapshot_at) AS domestic_direct_amt_krw,
+            arg_max(overseas_direct_amt_krw, snapshot_at) AS overseas_direct_amt_krw,
+            arg_max(overseas_indirect_amt_krw, snapshot_at) AS overseas_indirect_amt_krw,
+            arg_max(cash_amt_krw, snapshot_at) AS cash_amt_krw,
+            arg_max(unknown_amt_krw, snapshot_at) AS unknown_amt_krw,
+            arg_max(allocation_data, snapshot_at) AS allocation_data,
+            arg_max(classification_summary, snapshot_at) AS classification_summary,
+            arg_max(overview_data, snapshot_at) AS overview_data
+        FROM asset_overview_snapshots
+        WHERE total_eval_amt_krw IS NOT NULL
+        GROUP BY snap_date
     """)

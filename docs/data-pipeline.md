@@ -20,12 +20,17 @@ raw tables
   price_history
   exchange_rate_history
   portfolio_snapshots
+  overseas_asset_snapshots
+  asset_overview_snapshots
+  asset_holding_snapshots
+  instrument_master
+  instrument_classification_overrides
   trade_profit_history
 
 curated views / future tables
   portfolio_daily_snapshots
+  asset_overview_daily_snapshots
   future: portfolio_minute_snapshots
-  future: holdings_normalized
   future: account_nav_daily
 
 analytics functions
@@ -49,14 +54,14 @@ analytics functions
 
 ```sql
 portfolio_daily_snapshots
+asset_overview_daily_snapshots
 ```
 
-이 view는 계좌별/일자별 마지막 스냅샷을 대표값으로 사용한다.
+이 view들은 계좌별 또는 canonical snapshot별 일자 마지막 스냅샷을 대표값으로 사용한다.
 
 ## 향후 정제 작업 후보
 
 - `portfolio_minute_snapshots`: 같은 계좌의 같은 분 내 마지막 스냅샷
-- `holdings_normalized`: `balance_data` JSON에서 보유 종목을 행 단위로 펼친 테이블
 - `account_nav_daily`: 계좌별 일별 평가금액, 현금, 보유 평가금액, 환산 금액
 - `fx_daily`: 환율 데이터를 분석용 currency/date grain으로 표준화
 - `trade_profit_normalized`: 손익 JSON을 종목/기간 단위로 정규화

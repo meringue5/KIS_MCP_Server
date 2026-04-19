@@ -92,7 +92,8 @@ bash scripts/setup.sh
 * **get-configured-accounts** - 등록 계좌 목록 조회
 * **get-all-token-statuses** - 전체 계좌 토큰 캐시 상태 조회
 * **get-account-balance** - 특정 계좌 라벨 잔고 조회 및 스냅샷 저장
-* **refresh-all-account-snapshots** - 전체 계좌 잔고 순차 조회 및 스냅샷 저장
+* **refresh-all-account-snapshots** - 국내/연금 feeder 스냅샷 저장
+* **get-total-asset-overview** - canonical 총자산 요약, 국내/해외/현금성/해외우회투자 비중, 차트 데이터, snapshot 저장
 
 ### Market / History
 
@@ -125,11 +126,14 @@ bash scripts/setup.sh
 
 MotherDuck/DuckDB에 저장된 스냅샷은 API 재호출 없이 조회할 수 있습니다:
 
-* **get-latest-portfolio-summary** - 최신 스냅샷 기준 전체/단일 계좌 합산 요약
-* **get-portfolio-daily-change** - 일별 대표 스냅샷 기준 평가금액 변화
+* **get-latest-portfolio-summary** - 최신 국내/연금 feeder 스냅샷 기준 합산 요약
+* **get-total-asset-overview** - canonical 총자산 요약, 해외예수금 포함 총액, 경제적 노출 분류, 차트 데이터
+* **get-total-asset-history**, **get-total-asset-daily-change**
+* **get-total-asset-trend**, **get-total-asset-allocation-history**
+* **get-portfolio-daily-change** - 국내/연금 feeder 스냅샷 기준 평가금액 변화
 * **get-portfolio-history** - 계좌 잔고 스냅샷 이력
-* **get-portfolio-trend** - 일별 평가금액 이동평균과 추세
-* **get-portfolio-anomalies** - 일별 평가금액 변동 이상치 탐지
+* **get-portfolio-trend** - 국내/연금 feeder 스냅샷 이동평균과 추세
+* **get-portfolio-anomalies** - 국내/연금 feeder 스냅샷 변동 이상치
 
 주문 tool은 disabled stub입니다. 실제 주문 API를 호출하지 않습니다.
 
@@ -141,9 +145,14 @@ Claude가 계좌별 서버를 직접 조합하지 않아도 전체 계좌 조회
 * **get-configured-accounts** - 등록 계좌 목록 조회 (계좌번호 마스킹, secret 비노출)
 * **get-all-token-statuses** - 전체 계좌 토큰 캐시 상태 조회 (토큰 값 비노출)
 * **get-account-balance** - 특정 계좌 라벨 잔고 조회 및 스냅샷 저장
-* **refresh-all-account-snapshots** - 전체 계좌 잔고를 순차 조회하고 스냅샷 저장
-* **get-latest-portfolio-summary** - 최신 스냅샷 기준 전체/단일 계좌 합산 요약
-* **get-portfolio-daily-change** - 일별 대표 스냅샷 기준 평가금액 변화
+* **refresh-all-account-snapshots** - 국내/연금 feeder 스냅샷 저장
+* **get-total-asset-overview** - canonical 총자산 요약과 분류/차트 데이터
+* **get-total-asset-history**, **get-total-asset-daily-change**
+* **get-total-asset-trend**, **get-total-asset-allocation-history**
+
+국내 상장 해외투자 ETF/REIT는 `get-total-asset-overview`에서 `해외우회투자`로 별도 표시합니다.
+분류는 KIS 종목마스터 + 이름 heuristic + 로컬 override 계층으로 계산합니다.
+종목마스터 적재는 `uv run python scripts/sync_instrument_master.py`로 수행할 수 있습니다.
 
 ### Architecture Direction
 

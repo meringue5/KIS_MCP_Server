@@ -18,6 +18,8 @@ KIS API client, 계좌 오케스트레이션, MotherDuck 기반 데이터 저장
 |-----------|----------|
 | 전체 계좌 구성 조회 | `get-configured-accounts` |
 | 전체 계좌 국내/연금 잔고 스냅샷 | `refresh-all-account-snapshots` |
+| 국내/해외/환율 반영 전체 자산 요약 | `get-total-asset-overview` |
+| 총자산 일별 변화/추이/비중 이력 | `get-total-asset-daily-change`, `get-total-asset-trend`, `get-total-asset-allocation-history` |
 | 단일 계좌 국내주식 잔고 조회 | `get-account-balance` |
 | 단일 계좌 해외주식 잔고 조회 | `get-overseas-balance` |
 | 해외 예수금 + 적용환율 조회 | `get-overseas-deposit` |
@@ -195,8 +197,9 @@ KIS_DATA_DIR=var
 
 **현재 적용**:
 - 공통 skill: `.agent/skills/kis-portfolio-ops/SKILL.md`
-- 최신 합산 tool: `get-latest-portfolio-summary`
-- 일별 변화 tool: `get-portfolio-daily-change`
+- canonical 총자산 tool: `get-total-asset-overview`
+- 글로벌 분석 tool: `get-total-asset-history`, `get-total-asset-daily-change`, `get-total-asset-trend`
+- 국내/연금 feeder 분석 tool: `get-latest-portfolio-summary`, `get-portfolio-daily-change`
 - 주문 tool 기본 비활성: `KIS_ENABLE_ORDER_TOOLS=false`
 
 ---
@@ -281,6 +284,66 @@ entrypoint로 제공한다. 기존 fork의 `inquery-*` tool alias와 계좌별 M
   우선 검토한다.
 - 새 repository 생성은 공개 배포/브랜딩을 완전히 분리하거나, 기존 fork 관계를 GitHub UI상에서도 끊어야 할
   명확한 이유가 있을 때 선택한다.
+
+---
+
+### ADR-013: `get-total-asset-overview`를 canonical 총자산 API로 승격
+
+**결정**: 총자산, 대시보드, 국내/해외 비중, 경제적 노출 분석의 기준 API를
+`get-total-asset-overview` 하나로 고정한다. 국내/연금 raw feeder는 `portfolio_snapshots`에
+계속 저장하되, 총자산 분석은 `asset_overview_snapshots`와 관련 정규화 계층을 사용한다.
+
+**이유**:
+- 사용자가 실제로 원하는 총액에는 해외주식 평가액뿐 아니라 해외 예수금/현금성이 포함된다.
+- 국내/연금 feeder 요약과 글로벌 총자산 요약을 같은 이름으로 혼용하면 대시보드와 설명이 어긋난다.
+- 계좌 기준 비중과 경제적 노출 기준 비중은 같은 총액을 다른 관점으로 분해하는 문제이므로 canonical
+  aggregate와 normalized holding row가 필요하다.
+
+**현재 적용**:
+- raw feeder:
+  - `portfolio_snapshots`
+  - `overseas_asset_snapshots`
+- canonical aggregate:
+  - `asset_overview_snapshots`
+- normalized holdings:
+  - `asset_holding_snapshots`
+- curated view:
+  - `asset_overview_daily_snapshots`
+- 글로벌 분석 tool:
+  - `get-total-asset-history`
+  - `get-total-asset-daily-change`
+  - `get-total-asset-trend`
+  - `get-total-asset-allocation-history`
+- 기존 `get-latest-portfolio-summary`, `get-portfolio-daily-change`, `get-portfolio-trend`,
+  `get-portfolio-anomalies`는 국내/연금 feeder 분석으로 의미를 축소한다.
+
+---
+
+### ADR-014: 국내 상장 해외 ETF/REIT는 `해외우회투자`로 분류
+
+**결정**: 국내 상장 ETF/REIT 중 해외 노출 상품은 총자산 합산에서 국내 계좌 자산으로 유지하되,
+경제적 노출 차트에서는 `overseas_indirect`(`해외우회투자`)로 별도 표시한다.
+
+**이유**:
+- 계좌/통화 기준으로는 원화 국내 계좌 자산이 맞지만, 투자 노출 기준으로는 해외자산 성격이 강하다.
+- 총액을 이중 가산하지 않으면서 두 관점을 모두 제공하려면 분류 레이어가 필요하다.
+- KIS 공식 종목마스터만으로 실제 해외 노출을 완전히 판별하기 어렵다. 공식 예제/문서에는 `EF`, `FE`,
+  `RT` 같은 구분이 보이지만, 2026년 4월 19일 동기화한 실제 KRX master file에서는 `E`(ETF), `R`(REIT),
+  `S`(국내주), `F`(외국기업 국내상장) 같은 그룹코드도 관찰되므로 구현은 문서 코드와 observed code를 함께 다룬다.
+
+**분류 우선순위**:
+1. `instrument_classification_overrides`
+2. KIS 종목마스터 group code
+3. ETF/REIT 이름 heuristic
+4. `unknown`
+
+**현재 적용**:
+- 종목마스터 테이블: `instrument_master`
+- 로컬 override 테이블: `instrument_classification_overrides`
+- v1 이름 heuristic:
+  - 해외 힌트: `미국`, `나스닥`, `S&P`, `글로벌`, `Global`, `해외`, `선진국`, `신흥국`, `중국`, `일본`, `인도`, `베트남`
+  - 국내 힌트: `Korea`, `코리아`, `K수출`, `삼성전자`, `SK하이닉스`, `밸류업`
+- 경고 목록은 `classification_warnings`로 반환한다.
 
 ---
 

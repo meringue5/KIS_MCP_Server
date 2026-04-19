@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import duckdb
 
 
 def test_db_schema_initializes_with_configured_data_dir(tmp_path, monkeypatch):
@@ -20,7 +21,13 @@ def test_db_schema_initializes_with_configured_data_dir(tmp_path, monkeypatch):
         kisdb.close_connection()
 
     assert {
+        "asset_holding_snapshots",
+        "asset_overview_daily_snapshots",
+        "asset_overview_snapshots",
         "exchange_rate_history",
+        "instrument_classification_overrides",
+        "instrument_master",
+        "overseas_asset_snapshots",
         "portfolio_daily_snapshots",
         "portfolio_snapshots",
         "price_history",
@@ -28,6 +35,33 @@ def test_db_schema_initializes_with_configured_data_dir(tmp_path, monkeypatch):
         "trade_profit_history",
     }.issubset(tables)
     assert (tmp_path / "local" / "kis_portfolio.duckdb").exists()
+
+
+def test_db_schema_initialization_retries_write_conflict(tmp_path, monkeypatch):
+    monkeypatch.setenv("KIS_DB_MODE", "local")
+    monkeypatch.setenv("KIS_DATA_DIR", str(tmp_path))
+
+    import kis_portfolio.db.connection as connection
+    from kis_portfolio.db.schema import init_schema as real_init_schema
+
+    connection.close_connection()
+    calls = []
+
+    def flaky_init_schema(con):
+        calls.append(1)
+        if len(calls) == 1:
+            raise duckdb.TransactionException("write-write conflict")
+        real_init_schema(con)
+
+    monkeypatch.setattr(connection, "init_schema", flaky_init_schema)
+    try:
+        con = connection.get_connection()
+        tables = {name for (name,) in con.execute("show tables").fetchall()}
+    finally:
+        connection.close_connection()
+
+    assert len(calls) == 2
+    assert "portfolio_snapshots" in tables
 
 
 def test_relative_data_dir_resolves_from_project_root(monkeypatch):

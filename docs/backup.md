@@ -23,6 +23,11 @@ uv run python scripts/backup_motherduck.py
 ```text
 var/backup/parquet/YYYYMMDD_HHMMSS/
 ├── exchange_rate_history.parquet
+├── overseas_asset_snapshots.parquet
+├── asset_overview_snapshots.parquet
+├── asset_holding_snapshots.parquet
+├── instrument_master.parquet
+├── instrument_classification_overrides.parquet
 ├── portfolio_snapshots.parquet
 ├── price_history.parquet
 ├── trade_profit_history.parquet

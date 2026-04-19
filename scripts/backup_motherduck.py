@@ -34,6 +34,11 @@ TABLES = (
     "price_history",
     "exchange_rate_history",
     "portfolio_snapshots",
+    "overseas_asset_snapshots",
+    "asset_overview_snapshots",
+    "asset_holding_snapshots",
+    "instrument_master",
+    "instrument_classification_overrides",
     "trade_profit_history",
 )
 

@@ -1,6 +1,7 @@
 """Database connection management."""
 
 import logging
+import time
 
 import duckdb
 
@@ -43,7 +44,16 @@ def get_connection() -> duckdb.DuckDBPyConnection:
         raise ValueError("KIS_DB_MODE must be 'motherduck' or 'local'")
 
     _con = duckdb.connect(conn_str)
-    init_schema(_con)
+    for attempt in range(3):
+        try:
+            init_schema(_con)
+            break
+        except duckdb.TransactionException as exc:
+            if "write-write conflict" not in str(exc).lower() or attempt == 2:
+                _con.close()
+                _con = None
+                raise
+            time.sleep(0.2 * (attempt + 1))
     return _con
 
 

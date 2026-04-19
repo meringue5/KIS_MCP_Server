@@ -39,7 +39,17 @@ def main() -> int:
     backup = text("scripts/backup_motherduck.py")
     docs = text("docs/data-pipeline.md") + "\n" + text("docs/backup.md")
 
-    for table in ["portfolio_snapshots", "trade_profit_history", "price_history", "exchange_rate_history"]:
+    for table in [
+        "portfolio_snapshots",
+        "overseas_asset_snapshots",
+        "asset_overview_snapshots",
+        "asset_holding_snapshots",
+        "instrument_master",
+        "instrument_classification_overrides",
+        "trade_profit_history",
+        "price_history",
+        "exchange_rate_history",
+    ]:
         if table not in schema:
             failures.append(f"schema missing table/view reference: {table}")
         if table not in backup:
@@ -49,6 +59,8 @@ def main() -> int:
 
     if "CREATE OR REPLACE VIEW portfolio_daily_snapshots" not in schema:
         failures.append("schema must define portfolio_daily_snapshots curated view")
+    if "CREATE OR REPLACE VIEW asset_overview_daily_snapshots" not in schema:
+        failures.append("schema must define asset_overview_daily_snapshots curated view")
 
     portfolio_insert = function_block(repo, "insert_portfolio_snapshot")
     if "INSERT INTO portfolio_snapshots" not in portfolio_insert:
@@ -66,6 +78,13 @@ def main() -> int:
         failures.append("price_history should retain INSERT OR IGNORE cache semantics")
     if "INSERT OR IGNORE INTO exchange_rate_history" not in repo:
         failures.append("exchange_rate_history should retain INSERT OR IGNORE cache semantics")
+    for function_name, table in [
+        ("insert_overseas_asset_snapshot", "overseas_asset_snapshots"),
+        ("insert_asset_overview_snapshot", "asset_overview_snapshots"),
+    ]:
+        block = function_block(repo, function_name)
+        if f"INSERT INTO {table}" not in block:
+            failures.append(f"{function_name} must append INSERT INTO {table}")
 
     schema_lower = schema.lower()
     forbidden_secret_columns = ["access_token", "app_secret", "appsecret", "kis_app_secret"]

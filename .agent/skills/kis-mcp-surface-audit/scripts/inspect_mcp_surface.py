@@ -29,6 +29,7 @@ EXPECTED_TOOLS = {
     "get-all-token-statuses",
     "get-account-balance",
     "refresh-all-account-snapshots",
+    "get-total-asset-overview",
     "get-stock-price",
     "get-stock-ask",
     "get-stock-info",
@@ -52,6 +53,10 @@ EXPECTED_TOOLS = {
     "get-portfolio-daily-change",
     "get-portfolio-anomalies",
     "get-portfolio-trend",
+    "get-total-asset-history",
+    "get-total-asset-daily-change",
+    "get-total-asset-trend",
+    "get-total-asset-allocation-history",
 }
 
 

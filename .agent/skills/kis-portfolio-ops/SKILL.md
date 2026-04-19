@@ -18,12 +18,17 @@ Use this skill for read-first portfolio operations through the `kis-portfolio` M
 
 ## Preferred Tool Order
 
-1. Latest aggregate: `get-latest-portfolio-summary`.
-2. Daily movement: `get-portfolio-daily-change`.
-3. Account history: `get-portfolio-history`.
-4. Trend/anomaly: `get-portfolio-trend`, `get-portfolio-anomalies`.
-5. Current single account: `get-account-balance`.
-6. Current all accounts: `refresh-all-account-snapshots`, then re-run aggregate DB tools.
+1. Current full portfolio, total assets, domestic/overseas allocation, or chart-ready overview requests: `get-total-asset-overview`.
+2. Stored global aggregate/history/trend/allocation requests: `get-total-asset-history`, `get-total-asset-daily-change`, `get-total-asset-trend`, `get-total-asset-allocation-history`.
+3. Domestic/retirement feeder-only aggregate without freshness requirement: `get-latest-portfolio-summary`.
+4. Domestic/retirement feeder daily movement: `get-portfolio-daily-change`.
+5. Account history: `get-portfolio-history`.
+6. Trend/anomaly: `get-portfolio-trend`, `get-portfolio-anomalies`.
+7. Current single account: `get-account-balance`.
+
+Do not answer a full portfolio freshness request by calling `get-account-balance`
+once per account unless `get-total-asset-overview` and `refresh-all-account-snapshots`
+are unavailable.
 
 ## Account Labels
 
@@ -39,6 +44,8 @@ For routine summaries, include:
 
 - total evaluated amount
 - account-type or account-label breakdown
+- overseas stock vs overseas cash split when relevant
+- economic exposure split including `overseas_indirect` when relevant
 - latest snapshot timestamp
 - notable daily change if available
 - data source and freshness

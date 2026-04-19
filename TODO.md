@@ -19,6 +19,14 @@
   - ADR-011로 프로젝트 정체성 전환을 기록한다.
   - `docs/api-capability-map.md`에 공식 API 기준 capability map을 둔다.
 - [ ] Claude Desktop 실사용 리허설 결과를 반영한다.
+  - [x] 전체 자산현황용 `get-total-asset-overview`를 추가해 국내/해외/환율 반영 합계와 차트용 비중 데이터를 반환한다.
+  - [x] `get-total-asset-overview`를 canonical 총자산 API로 승격하고 글로벌 스냅샷/분석 tool을 추가한다.
+  - [x] 국내 상장 해외 ETF/REIT를 `해외우회투자`로 분류하는 master+heuristic+override 계층을 추가한다.
+  - [x] DB 검사 클라이언트 `inspect_portfolio_db.py`를 warehouse skill에 추가한다.
+  - [ ] `instrument_classification_overrides` 운영 루틴과 override 입력 UX를 정리한다.
+  - [ ] 종목마스터 동기화 주기와 실패 시 fallback 정책을 정리한다.
+  - [x] `sync_instrument_master.py`의 MotherDuck 대량 upsert 성능을 staging + bulk upsert로 개선한다.
+  - [ ] `sync_instrument_master.py`의 재시도/재개 전략을 정리한다.
 - [ ] 토큰 발급 감사 이벤트 저장을 추가한다.
   - access token 원문은 `var/tokens/`의 런타임 secret cache에만 보관한다.
   - MotherDuck에는 `account_label`, masked account id, `issued_at`, `expires_at`, refresh reason, token fingerprint 같은 메타데이터만 저장한다.
@@ -33,8 +41,13 @@
 
 ## Refactor
 
+- [ ] DB schema initialization을 runtime 자동 실행에서 migration/initialization command로 분리한다.
+  - 현재는 `get_connection()` 첫 호출에서 `init_schema()`가 실행된다.
+  - MotherDuck에서 여러 프로세스가 동시에 시작되면 `CREATE OR REPLACE VIEW` catalog write-write conflict가 날 수 있어 retry로 1차 방어 중이다.
+  - 운영화 전에는 schema version check, migration lock, read-only 검사 연결 전략을 정리한다.
 - [ ] `app.py` legacy MCP tool을 core service와 MCP adapter로 분리한다.
 - [ ] `docs/api-capability-map.md` 기준으로 KIS client/service 패키지 구조를 설계한다.
 - [ ] 포트폴리오 aggregate tool을 서비스 계층으로 추가 분리한다.
 - [ ] KIS client 모듈을 국내/해외/연금/환율 단위로 분리한다.
 - [ ] token refresh와 audit logging 경계를 정리한다.
+- [ ] ETF 편입종목/PDF/외부 데이터까지 포함한 해외노출 enrichment pipeline 필요성을 검토한다.

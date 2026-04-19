@@ -176,13 +176,21 @@ KIS_DB_MODE=local → var/local/kis_portfolio.duckdb
 | `price_history` | INSERT OR IGNORE | `get-stock-history`, `get-overseas-stock-history` 호출 시 |
 | `exchange_rate_history` | INSERT OR IGNORE | `get-exchange-rate-history` 호출 시 |
 | `portfolio_snapshots` | append-only INSERT | `get-account-balance`, `refresh-all-account-snapshots` 호출 시 |
+| `overseas_asset_snapshots` | append-only INSERT | `get-total-asset-overview(save_snapshot=True)` 호출 시 |
+| `asset_overview_snapshots` | append-only INSERT | `get-total-asset-overview(save_snapshot=True)` 호출 시 |
+| `asset_holding_snapshots` | append-only INSERT | `get-total-asset-overview(save_snapshot=True)` 호출 시 |
+| `instrument_master` | upsert | `scripts/sync_instrument_master.py` 실행 시 |
+| `instrument_classification_overrides` | upsert | 로컬 override 등록 시 |
 | `trade_profit_history` | append-only INSERT | `get-period-trade-profit`, `get-overseas-period-profit` 호출 시 |
 
 **DB 전용 조회 툴 (API 호출 없음):**
 - `get-portfolio-history` — 계좌 잔고 스냅샷 이력
 - `get-token-status` — 현재 MCP 인스턴스의 접근토큰 캐시 상태 조회 (토큰 값 제외)
-- `get-latest-portfolio-summary` — 최신 스냅샷 기준 전체/단일 계좌 합산 요약
-- `get-portfolio-daily-change` — 일별 대표 스냅샷 기준 평가금액 변화
+- `get-latest-portfolio-summary` — 국내/연금 feeder 최신 합산 요약
+- `get-total-asset-overview` — canonical 총자산 요약, 해외 예수금 포함, `해외우회투자` 분류/차트 데이터
+- `get-total-asset-history`, `get-total-asset-daily-change`
+- `get-total-asset-trend`, `get-total-asset-allocation-history`
+- `get-portfolio-daily-change` — 국내/연금 feeder 일별 대표 스냅샷 기준 평가금액 변화
 - `get-price-from-db` — 캐시된 주가 이력
 - `get-exchange-rate-from-db` — 캐시된 환율 이력
 
@@ -193,8 +201,13 @@ KIS_DB_MODE=local → var/local/kis_portfolio.duckdb
 
 **정제/분석 방향:**
 - `portfolio_snapshots`는 raw append-only로 유지
+- `overseas_asset_snapshots`는 해외계좌 raw/aggregate feeder로 유지
+- `asset_overview_snapshots`는 canonical 총자산 aggregate 저장소로 사용
+- `asset_holding_snapshots`는 canonical snapshot 기준 정규화 보유 row를 저장
 - 분/일 단위 중복 제거는 저장 시점이 아니라 curated view/pipeline에서 처리
 - 현재 일별 대표값 view: `portfolio_daily_snapshots`
+- 현재 canonical 일별 대표값 view: `asset_overview_daily_snapshots`
+- 국내 상장 해외 ETF/REIT 분류는 `override > KIS master group code > 이름 heuristic > unknown`
 - 상세 문서: `docs/data-pipeline.md`
 
 ## KIS Portfolio MCP
@@ -213,7 +226,11 @@ KIS_DB_MODE=local → var/local/kis_portfolio.duckdb
 - `get-order-list`, `get-order-detail`
 - `submit-stock-order`, `submit-overseas-stock-order` (disabled stub)
 - `get-latest-portfolio-summary`
+- `get-total-asset-overview`
+- `get-total-asset-history`, `get-total-asset-daily-change`
+- `get-total-asset-trend`, `get-total-asset-allocation-history`
 - `get-portfolio-daily-change`
+- `get-portfolio-anomalies`, `get-portfolio-trend`, `get-bollinger-bands`
 
 기존 fork의 `inquery-*` tool alias는 기본 MCP 표면에 등록하지 않는다.
 토큰 원문과 secret은 응답에 포함하지 않는다. 계좌번호는 계좌 메타데이터에서는 항상 마스킹한다.

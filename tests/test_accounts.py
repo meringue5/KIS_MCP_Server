@@ -48,7 +48,13 @@ def test_extract_total_eval_amt_known_fields_in_priority_order():
     assert extract_total_eval_amt({"output2": {"tot_evlu_amt": "1,000"}}) == 1000
     assert extract_total_eval_amt({"output2": {"scts_evlu_amt": "2,000"}}) == 2000
     assert extract_total_eval_amt({"output2": {"tot_asst_amt": "3,000"}}) == 3000
-    assert extract_total_eval_amt({"output2": {"dnca_tota": "4,000"}}) == 4000
+    assert extract_total_eval_amt({"output2": {"evlu_amt_smtl_amt": "4,000"}}) == 4000
+    assert extract_total_eval_amt({"output2": {"dnca_tot_amt": "5,000"}}) == 5000
+    assert extract_total_eval_amt({"output2": {"dnca_tota": "6,000"}}) == 6000
+
+
+def test_extract_total_eval_amt_handles_standard_balance_output2_list():
+    assert extract_total_eval_amt({"output2": [{"tot_evlu_amt": "1,000"}]}) == 1000
 
 
 def test_extract_total_eval_amt_ignores_unexpected_shapes():
