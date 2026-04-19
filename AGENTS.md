@@ -231,8 +231,8 @@ KIS_ACNT_PRDT_CD_{ACCOUNT}=
 
 ## 예정 작업
 
-- python-dotenv 도입 (클라우드 배포 대비)
-- 볼린저 밴드 (`get-bollinger-bands` tool)
-- 이상치 탐지 (`get-portfolio-anomalies` tool)
-- 포트폴리오 추이 분석 (`get-portfolio-trend` tool)
-- 상세 구현 명세: SPEC.md의 "DuckDB 분석 플랜" 섹션 참고
+- 토큰 발급 감사 이벤트 저장: access token 원문은 계속 `var/tokens/`에만 두고,
+  MotherDuck에는 발급/만료/refresh reason/token fingerprint 같은 메타데이터만 저장
+- remote MCP 인증을 OAuth/OIDC로 승격할지 검토
+- 포트폴리오 aggregate tool을 서비스 계층으로 추가 분리
+- 상세 구현 명세: SPEC.md 참고
