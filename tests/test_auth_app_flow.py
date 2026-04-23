@@ -168,6 +168,23 @@ def test_dynamic_client_registration_issues_chatgpt_client(monkeypatch, tmp_path
     close_connection()
 
 
+def test_openid_configuration_alias_matches_oauth_discovery(monkeypatch, tmp_path):
+    close_connection()
+    monkeypatch.setenv("KIS_DB_MODE", "local")
+    monkeypatch.setenv("KIS_DATA_DIR", str(tmp_path / "var"))
+
+    app = create_app(settings=_settings(), provider=_provider())
+
+    with TestClient(app) as client:
+        oidc = client.get("/.well-known/openid-configuration")
+        oauth = client.get("/.well-known/oauth-authorization-server")
+
+    assert oidc.status_code == 200
+    assert oauth.status_code == 200
+    assert oidc.json() == oauth.json()
+    close_connection()
+
+
 def test_dynamic_client_registration_rejects_untrusted_redirect_uri(monkeypatch, tmp_path):
     close_connection()
     monkeypatch.setenv("KIS_DB_MODE", "local")

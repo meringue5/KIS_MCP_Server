@@ -813,6 +813,9 @@ def create_app(
         debug=False,
         routes=[
             Route("/health", health),
+            # Some MCP connector clients probe the OIDC discovery alias before
+            # falling back to the OAuth authorization server metadata route.
+            Route("/.well-known/openid-configuration", discovery),
             Route("/.well-known/oauth-authorization-server", discovery),
             Route("/register", register, methods=["POST"]),
             Route("/authorize", authorize, methods=["GET", "POST"]),

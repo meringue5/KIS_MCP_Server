@@ -348,6 +348,37 @@ entrypoint로 제공한다. 기존 fork의 `inquery-*` tool alias와 계좌별 M
 
 ---
 
+### ADR-015: 원격 MCP connector 호환성은 클라이언트별 discovery/UI 차이를 별도 관리
+
+**결정**: Claude와 ChatGPT의 remote MCP 연결은 동일한 MCP/OAuth 서버를 사용하더라도
+client-specific discovery와 대화 단위 attachment 상태를 별도 호환성 축으로 관리한다.
+운영 기준으로는 auth server가 `/.well-known/oauth-authorization-server`와
+`/.well-known/openid-configuration`을 함께 제공해야 하며, connector 재검증은
+`설정 화면`과 `새 대화에서의 실제 tool 호출`을 분리해서 본다.
+
+**관찰 근거 (2026-04-23)**:
+- ChatGPT는 auth `/register 201`, `/token 200`, remote `/mcp`의 `ListToolsRequest 200`까지 성공한 뒤에도
+  기존 대화에서는 "앱이 연결되지 않았다"는 메시지를 유지할 수 있었다.
+- Claude는 OAuth와 remote `/mcp` 호출이 성공하고 실제 대화에서 tool 호출도 동작했지만,
+  connector 설정 화면에서는 "사용 가능한 도구가 없다"로 보일 수 있었다.
+- 두 클라이언트 모두 auth issuer에 대해 `/.well-known/openid-configuration`를 probe했고,
+  기존 구현은 이 경로가 `404`였다.
+
+**해석**:
+- ChatGPT는 connector 연결 상태를 대화 단위로 cache하므로, 재연결 후에는 `새 대화`에서 다시 시작하는 것을
+  정상 경로로 본다.
+- Claude는 일부 UI 흐름에서 tool drawer와 실제 대화 실행 경로가 다르게 보일 수 있으므로,
+  설정 화면에 도구가 안 보여도 실제 대화 호출 로그로 별도 검증해야 한다.
+- 따라서 "도구 목록이 보인다/안 보인다"만으로 배포 회귀를 판단하지 않고,
+  auth discovery, token 교환, `/mcp` initialize/list-tools 로그, 실제 대화 호출 성공 여부를 함께 확인한다.
+
+**현재 적용**:
+- auth discovery alias: `/.well-known/openid-configuration`
+- ChatGPT 재검증 절차: connector 재연결 후 `새 대화`에서 tool 호출 확인
+- Claude 재검증 절차: 설정 화면과 별개로 실제 대화에서 tool 호출 확인
+
+---
+
 ## API 제한사항
 
 - 대량 이력 조회 시 KIS 서버에서 차단 가능 → 로컬 캐시 도입의 주요 이유

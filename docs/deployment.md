@@ -33,6 +33,8 @@ ChatGPT 호환과 운영 배포의 기본 경로다. 구조는 **별도 auth ser
 - `/.well-known/oauth-authorization-server`
 - `/authorize`는 auth server `/authorize`로 redirect
 - `/register`, `/token`, `/revoke`는 auth server로 proxy
+- auth server는 `/.well-known/oauth-authorization-server`와 함께
+  `/.well-known/openid-configuration` alias도 제공한다. 일부 클라이언트가 OIDC discovery를 먼저 probe한 뒤 OAuth metadata로 fallback하기 때문이다.
 - Cloud Run auth는 기본적으로 `max-instances=1`로 배포한다.
   현재 운영 가정이 단일 소유자 interactive auth flow이기 때문에 기본값을 보수적으로 둔다.
 - Cloud Run remote는 기본적으로 `max-instances=1`, `concurrency=20`으로 배포한다.
