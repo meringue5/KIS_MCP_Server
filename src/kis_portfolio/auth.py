@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import os
 import sys
-from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,14 @@ from typing import Any
 import httpx
 
 from .config import get_token_dir
+from .db.kis_token_repository import get_kis_api_access_token, upsert_kis_api_access_token
+from .kis_token_crypto import (
+    TokenDecryptionError,
+    TokenEncryptionConfigError,
+    decrypt_token,
+    ensure_token_encryption_ready,
+    encrypt_token,
+)
 
 
 CONTENT_TYPE = "application/json"
@@ -21,6 +30,7 @@ TOKEN_PATH = "/oauth2/tokenP"
 HASHKEY_PATH = "/uapi/hashkey"
 TOKEN_REFRESH_SAFETY = timedelta(minutes=10)
 DEFAULT_TOKEN_LIFETIME = timedelta(hours=23, minutes=50)
+_TOKEN_REFRESH_LOCKS: dict[str, asyncio.Lock] = {}
 
 
 def get_token_file(cano: str | None = None) -> Path:
@@ -43,18 +53,120 @@ def load_token(token_file: Path | None = None) -> tuple[str | None, datetime | N
     return None, None
 
 
+def _require_env(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise RuntimeError(f"{name} is required for KIS token cache operations.")
+    return value
+
+
+def _get_cache_context() -> dict[str, str]:
+    account_type = _require_env("KIS_ACCOUNT_TYPE").upper()
+    cano = _require_env("KIS_CANO")
+    app_key = _require_env("KIS_APP_KEY")
+    return {
+        "account_type": account_type,
+        "account_id": cano,
+        "app_key": app_key,
+        "cache_key": hashlib.sha256(f"{account_type}:{cano}:{app_key}".encode("utf-8")).hexdigest(),
+        "app_key_fingerprint": hashlib.sha256(app_key.encode("utf-8")).hexdigest(),
+    }
+
+
+def _coerce_expires_in(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _persist_token_record(
+    *,
+    cache_context: dict[str, str],
+    token: str,
+    issued_at: datetime,
+    expires_at: datetime,
+    token_type: str | None,
+    expires_in: int | None,
+    response_expiry_raw: str | None,
+    migrated_from_file: bool,
+) -> dict[str, Any]:
+    ciphertext = encrypt_token(token)
+    return upsert_kis_api_access_token(
+        cache_key=cache_context["cache_key"],
+        account_id=cache_context["account_id"],
+        account_type=cache_context["account_type"],
+        app_key_fingerprint=cache_context["app_key_fingerprint"],
+        token_ciphertext=ciphertext,
+        token_type=token_type or AUTH_TYPE,
+        issued_at=issued_at,
+        expires_at=expires_at,
+        expires_in=expires_in,
+        response_expiry_raw=response_expiry_raw,
+        migrated_from_file=migrated_from_file,
+    )
+
+
+def _read_db_token_record(cache_context: dict[str, str]) -> dict[str, Any] | None:
+    return get_kis_api_access_token(cache_context["cache_key"])
+
+
+def _read_valid_token_from_db(cache_context: dict[str, str]) -> tuple[str | None, dict[str, Any] | None]:
+    record = _read_db_token_record(cache_context)
+    if record is None:
+        return None, None
+
+    expires_at = record.get("expires_at")
+    if not isinstance(expires_at, datetime):
+        raise RuntimeError("Cached KIS token row is missing a valid expires_at timestamp.")
+    if not is_token_valid(expires_at):
+        return None, record
+
+    ciphertext = record.get("token_ciphertext")
+    if not isinstance(ciphertext, str) or not ciphertext:
+        raise RuntimeError("Cached KIS token row is missing token ciphertext.")
+    return decrypt_token(ciphertext), record
+
+
+def _migrate_legacy_token_if_available(
+    cache_context: dict[str, str],
+    token_file: Path | None,
+) -> tuple[str | None, datetime | None]:
+    path = token_file or get_token_file()
+    token, expires_at = load_token(path)
+    if not token or not expires_at:
+        return None, None
+
+    token_data = json.loads(path.read_text())
+    issued_at_raw = token_data.get("issued_at")
+    issued_at = datetime.fromisoformat(issued_at_raw) if issued_at_raw else datetime.now()
+    _persist_token_record(
+        cache_context=cache_context,
+        token=token,
+        issued_at=issued_at,
+        expires_at=expires_at,
+        token_type=token_data.get("token_type"),
+        expires_in=_coerce_expires_in(token_data.get("expires_in")),
+        response_expiry_raw=token_data.get("access_token_token_expired"),
+        migrated_from_file=True,
+    )
+    path.unlink(missing_ok=True)
+    return token, expires_at
+
+
 def get_token_status(token_file: Path | None = None) -> dict[str, Any]:
     """Return token cache metadata without exposing the token value."""
-    path = token_file or get_token_file()
-    if not path.exists():
+    try:
+        cache_context = _get_cache_context()
+        record = _read_db_token_record(cache_context)
+    except RuntimeError as e:
         return {
             "exists": False,
-            "status": "missing",
+            "status": "misconfigured",
+            "error": str(e),
         }
-
-    try:
-        token_data = json.loads(path.read_text())
-        expires_at = datetime.fromisoformat(token_data["expires_at"])
     except Exception as e:
         return {
             "exists": True,
@@ -62,6 +174,45 @@ def get_token_status(token_file: Path | None = None) -> dict[str, Any]:
             "error": str(e),
         }
 
+    if record is None:
+        path = token_file or get_token_file()
+        if not path.exists():
+            return {
+                "exists": False,
+                "status": "missing",
+            }
+        try:
+            token_data = json.loads(path.read_text())
+            expires_at = datetime.fromisoformat(token_data["expires_at"])
+        except Exception as e:
+            return {
+                "exists": True,
+                "status": "unreadable",
+                "storage": "legacy_file",
+                "error": str(e),
+            }
+        now = datetime.now()
+        if is_token_valid(expires_at, now):
+            status = "valid"
+        elif now < expires_at:
+            status = "near_expiry"
+        else:
+            status = "expired"
+        result = {
+            "exists": True,
+            "status": status,
+            "storage": "legacy_file",
+            "has_token": bool(token_data.get("token")),
+            "issued_at": token_data.get("issued_at"),
+            "expires_at": expires_at.isoformat(),
+            "minutes_until_expiry": round((expires_at - now).total_seconds() / 60, 1),
+        }
+        for key in ("token_type", "expires_in", "access_token_token_expired"):
+            if key in token_data:
+                result[key] = token_data[key]
+        return result
+
+    expires_at = record["expires_at"]
     now = datetime.now()
     if is_token_valid(expires_at, now):
         status = "valid"
@@ -73,14 +224,20 @@ def get_token_status(token_file: Path | None = None) -> dict[str, Any]:
     result = {
         "exists": True,
         "status": status,
-        "has_token": bool(token_data.get("token")),
-        "issued_at": token_data.get("issued_at"),
+        "storage": "db",
+        "has_token": bool(record.get("token_ciphertext")),
+        "issued_at": record["issued_at"].isoformat() if record.get("issued_at") else None,
         "expires_at": expires_at.isoformat(),
         "minutes_until_expiry": round((expires_at - now).total_seconds() / 60, 1),
     }
-    for key in ("token_type", "expires_in", "access_token_token_expired"):
-        if key in token_data:
-            result[key] = token_data[key]
+    if record.get("token_type"):
+        result["token_type"] = record["token_type"]
+    if record.get("expires_in") is not None:
+        result["expires_in"] = record["expires_in"]
+    if record.get("response_expiry_raw"):
+        result["access_token_token_expired"] = record["response_expiry_raw"]
+    if record.get("migrated_from_file"):
+        result["migrated_from_file"] = True
     return result
 
 
@@ -145,29 +302,12 @@ def save_token(
     tmp.replace(path)
 
 
-@contextmanager
-def token_file_lock(token_file: Path):
-    """Serialize token refreshes across MCP processes for the same account."""
-    lock_path = token_file.with_suffix(token_file.suffix + ".lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+") as lock:
-        if os.name == "nt":
-            import msvcrt
-
-            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
-            try:
-                yield
-            finally:
-                lock.seek(0)
-                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+def _get_refresh_lock(cache_key: str) -> asyncio.Lock:
+    lock = _TOKEN_REFRESH_LOCKS.get(cache_key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _TOKEN_REFRESH_LOCKS[cache_key] = lock
+    return lock
 
 
 async def get_access_token(
@@ -175,20 +315,28 @@ async def get_access_token(
     domain: str,
     token_file: Path | None = None,
 ) -> str:
-    """
-    Get access token with file-based caching.
-
-    Returns cached token if valid, otherwise requests a new token from KIS.
-    """
-    path = token_file or get_token_file()
-    token, expires_at = load_token(path)
-    if token and expires_at:
+    """Get access token from the encrypted DB cache or request a new one."""
+    cache_context = _get_cache_context()
+    ensure_token_encryption_ready()
+    try:
+        token, _record = _read_valid_token_from_db(cache_context)
+    except (TokenDecryptionError, TokenEncryptionConfigError):
+        raise
+    if token:
         return token
 
-    with token_file_lock(path):
-        token, expires_at = load_token(path)
-        if token and expires_at:
+    async with _get_refresh_lock(cache_context["cache_key"]):
+        try:
+            token, record = _read_valid_token_from_db(cache_context)
+        except (TokenDecryptionError, TokenEncryptionConfigError):
+            raise
+        if token:
             return token
+
+        if record is None:
+            token, expires_at = _migrate_legacy_token_if_available(cache_context, token_file)
+            if token and expires_at:
+                return token
 
         token_response = await client.post(
             f"{domain}{TOKEN_PATH}",
@@ -207,7 +355,16 @@ async def get_access_token(
         token_data = token_response.json()
         token = token_data["access_token"]
         expires_at = parse_kis_expiry(token_data, issued_at)
-        save_token(token, expires_at, path, issued_at=issued_at, response_data=token_data)
+        _persist_token_record(
+            cache_context=cache_context,
+            token=token,
+            issued_at=issued_at,
+            expires_at=expires_at,
+            token_type=token_data.get("token_type"),
+            expires_in=_coerce_expires_in(token_data.get("expires_in")),
+            response_expiry_raw=token_data.get("access_token_token_expired"),
+            migrated_from_file=False,
+        )
 
     return token
 

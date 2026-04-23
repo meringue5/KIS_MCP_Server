@@ -1,0 +1,112 @@
+"""Repository helpers for encrypted KIS API access-token cache rows."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+from kis_portfolio.db.connection import get_connection
+
+
+TOKEN_COLUMNS = """
+    cache_key,
+    account_id,
+    account_type,
+    app_key_fingerprint,
+    token_ciphertext,
+    token_type,
+    issued_at,
+    expires_at,
+    expires_in,
+    response_expiry_raw,
+    migrated_from_file,
+    created_at,
+    updated_at
+"""
+
+
+def _row_to_dict(cursor, row) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    columns = [desc[0] for desc in cursor.description]
+    return dict(zip(columns, row))
+
+
+def get_kis_api_access_token(cache_key: str) -> dict[str, Any] | None:
+    con = get_connection()
+    cursor = con.execute(
+        f"""
+        SELECT {TOKEN_COLUMNS}
+        FROM kis_api_access_tokens
+        WHERE cache_key=?
+        """,
+        [cache_key],
+    )
+    return _row_to_dict(cursor, cursor.fetchone())
+
+
+def upsert_kis_api_access_token(
+    *,
+    cache_key: str,
+    account_id: str,
+    account_type: str,
+    app_key_fingerprint: str,
+    token_ciphertext: str,
+    token_type: str,
+    issued_at: datetime,
+    expires_at: datetime,
+    expires_in: int | None,
+    response_expiry_raw: str | None,
+    migrated_from_file: bool,
+) -> dict[str, Any]:
+    con = get_connection()
+    now = datetime.now()
+    cursor = con.execute(
+        f"""
+        INSERT INTO kis_api_access_tokens (
+            cache_key,
+            account_id,
+            account_type,
+            app_key_fingerprint,
+            token_ciphertext,
+            token_type,
+            issued_at,
+            expires_at,
+            expires_in,
+            response_expiry_raw,
+            migrated_from_file,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (cache_key) DO UPDATE SET
+            account_id = excluded.account_id,
+            account_type = excluded.account_type,
+            app_key_fingerprint = excluded.app_key_fingerprint,
+            token_ciphertext = excluded.token_ciphertext,
+            token_type = excluded.token_type,
+            issued_at = excluded.issued_at,
+            expires_at = excluded.expires_at,
+            expires_in = excluded.expires_in,
+            response_expiry_raw = excluded.response_expiry_raw,
+            migrated_from_file = excluded.migrated_from_file,
+            updated_at = excluded.updated_at
+        RETURNING {TOKEN_COLUMNS}
+        """,
+        [
+            cache_key,
+            account_id,
+            account_type,
+            app_key_fingerprint,
+            token_ciphertext,
+            token_type,
+            issued_at,
+            expires_at,
+            expires_in,
+            response_expiry_raw,
+            migrated_from_file,
+            now,
+        ],
+    )
+    row = cursor.fetchone()
+    assert row is not None
+    return _row_to_dict(cursor, row) or {}

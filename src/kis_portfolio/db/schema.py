@@ -7,6 +7,17 @@ import duckdb
 logger = logging.getLogger(__name__)
 
 
+def _ensure_column(
+    con: duckdb.DuckDBPyConnection,
+    table_name: str,
+    column_name: str,
+    column_definition: str,
+) -> None:
+    con.execute(
+        f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column_name} {column_definition}"
+    )
+
+
 def init_schema(con: duckdb.DuckDBPyConnection) -> None:
     """Create required raw tables and curated views if they do not exist."""
     con.execute("""
@@ -163,6 +174,142 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
             PRIMARY KEY (id)
         )
     """)
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS kis_api_access_tokens (
+            cache_key           VARCHAR NOT NULL,
+            account_id          VARCHAR NOT NULL,
+            account_type        VARCHAR NOT NULL,
+            app_key_fingerprint VARCHAR NOT NULL,
+            token_ciphertext    VARCHAR NOT NULL,
+            token_type          VARCHAR,
+            issued_at           TIMESTAMP NOT NULL,
+            expires_at          TIMESTAMP NOT NULL,
+            expires_in          BIGINT,
+            response_expiry_raw VARCHAR,
+            migrated_from_file  BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at          TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            updated_at          TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            PRIMARY KEY (cache_key)
+        )
+    """)
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS auth_users (
+            id            VARCHAR NOT NULL DEFAULT gen_random_uuid(),
+            primary_email VARCHAR NOT NULL UNIQUE,
+            display_name  VARCHAR,
+            is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at    TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            updated_at    TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            PRIMARY KEY (id)
+        )
+    """)
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS auth_identities (
+            id               VARCHAR NOT NULL DEFAULT gen_random_uuid(),
+            user_id          VARCHAR NOT NULL,
+            provider         VARCHAR NOT NULL,
+            provider_subject VARCHAR NOT NULL,
+            email            VARCHAR,
+            email_verified   BOOLEAN NOT NULL DEFAULT FALSE,
+            profile_data     JSON,
+            created_at       TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            updated_at       TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            PRIMARY KEY (id),
+            UNIQUE (provider, provider_subject)
+        )
+    """)
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS oauth_clients (
+            client_id                    VARCHAR NOT NULL,
+            client_secret_hash           VARCHAR NOT NULL,
+            redirect_uris                JSON NOT NULL,
+            grant_types                  JSON NOT NULL,
+            response_types               JSON NOT NULL,
+            scope                        VARCHAR,
+            client_name                  VARCHAR,
+            token_endpoint_auth_method   VARCHAR NOT NULL DEFAULT 'client_secret_basic',
+            metadata                     JSON,
+            client_id_issued_at          TIMESTAMP,
+            client_secret_expires_at     TIMESTAMP,
+            created_at                   TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            updated_at                   TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            PRIMARY KEY (client_id)
+        )
+    """)
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS oauth_grants (
+            id          VARCHAR NOT NULL DEFAULT gen_random_uuid(),
+            user_id     VARCHAR NOT NULL,
+            client_id   VARCHAR NOT NULL,
+            scope       VARCHAR NOT NULL,
+            granted_at  TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            revoked_at  TIMESTAMP,
+            created_at  TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            updated_at  TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            PRIMARY KEY (id),
+            UNIQUE (user_id, client_id, scope)
+        )
+    """)
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
+            id                              VARCHAR NOT NULL DEFAULT gen_random_uuid(),
+            user_id                         VARCHAR NOT NULL,
+            client_id                       VARCHAR NOT NULL,
+            grant_id                        VARCHAR,
+            code_digest                     VARCHAR NOT NULL UNIQUE,
+            scope                           VARCHAR NOT NULL,
+            redirect_uri                    VARCHAR NOT NULL,
+            redirect_uri_provided_explicitly BOOLEAN NOT NULL DEFAULT FALSE,
+            code_challenge                  VARCHAR NOT NULL,
+            resource                        VARCHAR,
+            state                           VARCHAR,
+            provider                        VARCHAR,
+            created_at                      TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            expires_at                      TIMESTAMP NOT NULL,
+            consumed_at                     TIMESTAMP,
+            revoked_at                      TIMESTAMP,
+            PRIMARY KEY (id)
+        )
+    """)
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS oauth_tokens (
+            id               VARCHAR NOT NULL DEFAULT gen_random_uuid(),
+            user_id          VARCHAR NOT NULL,
+            client_id        VARCHAR NOT NULL,
+            grant_id         VARCHAR,
+            token_type       VARCHAR NOT NULL,
+            token_digest     VARCHAR NOT NULL UNIQUE,
+            scope            VARCHAR NOT NULL,
+            resource         VARCHAR,
+            created_at       TIMESTAMP NOT NULL DEFAULT current_timestamp,
+            expires_at       TIMESTAMP,
+            revoked_at       TIMESTAMP,
+            parent_token_id  VARCHAR,
+            replaces_token_id VARCHAR,
+            PRIMARY KEY (id)
+        )
+    """)
+
+    _ensure_column(con, "oauth_clients", "metadata", "JSON")
+    _ensure_column(con, "oauth_authorization_codes", "resource", "VARCHAR")
+    _ensure_column(con, "oauth_tokens", "resource", "VARCHAR")
+    _ensure_column(con, "kis_api_access_tokens", "app_key_fingerprint", "VARCHAR")
+    _ensure_column(con, "kis_api_access_tokens", "token_ciphertext", "VARCHAR")
+    _ensure_column(con, "kis_api_access_tokens", "token_type", "VARCHAR")
+    _ensure_column(con, "kis_api_access_tokens", "issued_at", "TIMESTAMP")
+    _ensure_column(con, "kis_api_access_tokens", "expires_at", "TIMESTAMP")
+    _ensure_column(con, "kis_api_access_tokens", "expires_in", "BIGINT")
+    _ensure_column(con, "kis_api_access_tokens", "response_expiry_raw", "VARCHAR")
+    _ensure_column(con, "kis_api_access_tokens", "migrated_from_file", "BOOLEAN")
+    _ensure_column(con, "kis_api_access_tokens", "created_at", "TIMESTAMP")
+    _ensure_column(con, "kis_api_access_tokens", "updated_at", "TIMESTAMP")
 
     create_curated_views(con)
     logger.info("DB schema initialized")

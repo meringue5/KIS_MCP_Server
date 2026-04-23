@@ -1,13 +1,72 @@
+from __future__ import annotations
+
+import asyncio
+import hashlib
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
 
 from kis_portfolio import auth
+from kis_portfolio.db.connection import close_connection, get_connection
+from kis_portfolio.db.kis_token_repository import get_kis_api_access_token, upsert_kis_api_access_token
+from kis_portfolio.kis_token_crypto import (
+    TokenDecryptionError,
+    TokenEncryptionConfigError,
+    encrypt_token,
+)
 
 
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+@pytest.fixture
+def local_token_cache_env(tmp_path, monkeypatch):
+    close_connection()
+    monkeypatch.setenv("KIS_DB_MODE", "local")
+    monkeypatch.setenv("KIS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("KIS_ACCOUNT_TYPE", "REAL")
+    monkeypatch.setenv("KIS_CANO", "12345678")
+    monkeypatch.setenv("KIS_APP_KEY", "app-key-1")
+    monkeypatch.setenv("KIS_APP_SECRET", "app-secret-1")
+    monkeypatch.setenv("KIS_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
+    yield tmp_path
+    close_connection()
+
+
+def _cache_key(account_type: str, cano: str, app_key: str) -> str:
+    return hashlib.sha256(f"{account_type}:{cano}:{app_key}".encode("utf-8")).hexdigest()
+
+
+def _insert_cached_row(
+    *,
+    token: str = "cached-token",
+    account_type: str = "REAL",
+    cano: str = "12345678",
+    app_key: str = "app-key-1",
+    expires_at: datetime | None = None,
+    issued_at: datetime | None = None,
+    migrated_from_file: bool = False,
+    token_ciphertext: str | None = None,
+):
+    issued_at = issued_at or datetime.now()
+    expires_at = expires_at or (issued_at + timedelta(hours=1))
+    return upsert_kis_api_access_token(
+        cache_key=_cache_key(account_type, cano, app_key),
+        account_id=cano,
+        account_type=account_type,
+        app_key_fingerprint=hashlib.sha256(app_key.encode("utf-8")).hexdigest(),
+        token_ciphertext=token_ciphertext or encrypt_token(token),
+        token_type="Bearer",
+        issued_at=issued_at,
+        expires_at=expires_at,
+        expires_in=int((expires_at - issued_at).total_seconds()),
+        response_expiry_raw=expires_at.strftime("%Y-%m-%d %H:%M:%S"),
+        migrated_from_file=migrated_from_file,
+    )
 
 
 def test_get_token_file_uses_account_specific_name(tmp_path, monkeypatch):
@@ -60,51 +119,68 @@ def test_parse_kis_expiry_uses_expires_in():
     assert expires_at == datetime(2026, 4, 19, 11, 0, 0)
 
 
-def test_get_token_status_hides_token_value(tmp_path):
-    token_file = tmp_path / "token.json"
-    auth.save_token(
-        "secret-token",
-        datetime.now() + timedelta(hours=1),
-        token_file,
-        response_data={"token_type": "Bearer", "expires_in": 3600},
-    )
-
-    status = auth.get_token_status(token_file)
-
-    assert status["exists"] is True
-    assert status["status"] == "valid"
-    assert status["has_token"] is True
-    assert status["token_type"] == "Bearer"
-    assert "token" not in status
-
-
 @pytest.mark.anyio
-async def test_get_access_token_reuses_cached_token(tmp_path, monkeypatch):
-    token_file = tmp_path / "token.json"
-    auth.save_token("cached-token", datetime.now() + timedelta(hours=1), token_file)
-
-    class Client:
-        async def post(self, *args, **kwargs):
-            raise AssertionError("cached token should avoid network call")
-
-    assert await auth.get_access_token(Client(), "https://example.com", token_file) == "cached-token"
-
-
-@pytest.mark.anyio
-async def test_get_access_token_requests_and_saves_new_token(tmp_path, monkeypatch):
-    token_file = tmp_path / "token.json"
-    monkeypatch.setenv("KIS_APP_KEY", "app-key")
-    monkeypatch.setenv("KIS_APP_SECRET", "app-secret")
+async def test_get_token_status_hides_token_value(local_token_cache_env):
+    future_expiry = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
 
     class Response:
         status_code = 200
+
+        @property
+        def text(self):
+            return "ok"
 
         def json(self):
             return {
                 "access_token": "new-token",
                 "token_type": "Bearer",
                 "expires_in": 86400,
-                "access_token_token_expired": "2026-04-20 12:00:00",
+                "access_token_token_expired": future_expiry,
+            }
+
+    class Client:
+        async def post(self, *args, **kwargs):
+            return Response()
+
+    await auth.get_access_token(Client(), "https://example.com")
+    status = auth.get_token_status()
+
+    assert status["exists"] is True
+    assert status["status"] == "valid"
+    assert status["storage"] == "db"
+    assert status["has_token"] is True
+    assert status["token_type"] == "Bearer"
+    assert "token" not in status
+
+
+@pytest.mark.anyio
+async def test_get_access_token_reuses_cached_db_token(local_token_cache_env):
+    _insert_cached_row()
+
+    class Client:
+        async def post(self, *args, **kwargs):
+            raise AssertionError("cached token should avoid network call")
+
+    assert await auth.get_access_token(Client(), "https://example.com") == "cached-token"
+
+
+@pytest.mark.anyio
+async def test_get_access_token_requests_and_saves_new_token(local_token_cache_env):
+    future_expiry = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+
+    class Response:
+        status_code = 200
+
+        @property
+        def text(self):
+            return "ok"
+
+        def json(self):
+            return {
+                "access_token": "new-token",
+                "token_type": "Bearer",
+                "expires_in": 86400,
+                "access_token_token_expired": future_expiry,
             }
 
     class Client:
@@ -116,23 +192,225 @@ async def test_get_access_token_requests_and_saves_new_token(tmp_path, monkeypat
             return Response()
 
     client = Client()
-    token = await auth.get_access_token(client, "https://example.com", token_file)
+    token = await auth.get_access_token(client, "https://example.com")
 
     assert token == "new-token"
     assert client.calls[0][0] == "https://example.com/oauth2/tokenP"
-    saved = auth.load_token(token_file)
-    assert saved[0] == "new-token"
-    token_data = __import__("json").loads(token_file.read_text())
-    assert token_data["token_type"] == "Bearer"
-    assert token_data["access_token_token_expired"] == "2026-04-20 12:00:00"
-    assert "issued_at" in token_data
+    assert not auth.get_token_file().exists()
+
+    row = get_kis_api_access_token(_cache_key("REAL", "12345678", "app-key-1"))
+    assert row is not None
+    assert row["token_type"] == "Bearer"
+    assert row["response_expiry_raw"] == future_expiry
 
 
 @pytest.mark.anyio
-async def test_get_hashkey_posts_to_hashkey_endpoint(monkeypatch):
-    monkeypatch.setenv("KIS_APP_KEY", "app-key")
-    monkeypatch.setenv("KIS_APP_SECRET", "app-secret")
+async def test_get_access_token_refreshes_near_expiry_db_token(local_token_cache_env):
+    _insert_cached_row(expires_at=datetime.now() + timedelta(minutes=5))
 
+    class Response:
+        status_code = 200
+
+        @property
+        def text(self):
+            return "ok"
+
+        def json(self):
+            return {
+                "access_token": "refreshed-token",
+                "token_type": "Bearer",
+                "expires_in": 86400,
+            }
+
+    class Client:
+        def __init__(self):
+            self.calls = 0
+
+        async def post(self, *args, **kwargs):
+            self.calls += 1
+            return Response()
+
+    client = Client()
+    token = await auth.get_access_token(client, "https://example.com")
+
+    assert token == "refreshed-token"
+    assert client.calls == 1
+
+
+@pytest.mark.anyio
+async def test_get_access_token_requires_token_encryption_key(local_token_cache_env, monkeypatch):
+    monkeypatch.delenv("KIS_TOKEN_ENCRYPTION_KEY", raising=False)
+
+    class Client:
+        async def post(self, *args, **kwargs):
+            raise AssertionError("network call must not happen without encryption key")
+
+    with pytest.raises(TokenEncryptionConfigError):
+        await auth.get_access_token(Client(), "https://example.com")
+
+
+@pytest.mark.anyio
+async def test_get_access_token_fails_closed_on_corrupted_ciphertext(local_token_cache_env):
+    _insert_cached_row(token_ciphertext="corrupted")
+
+    class Client:
+        async def post(self, *args, **kwargs):
+            raise AssertionError("corrupted cache row must not fall back to network")
+
+    with pytest.raises(TokenDecryptionError):
+        await auth.get_access_token(Client(), "https://example.com")
+
+
+@pytest.mark.anyio
+async def test_get_access_token_migrates_legacy_file_to_db(local_token_cache_env):
+    legacy_file = Path(local_token_cache_env) / "tokens" / "token_12345678.json"
+    auth.save_token(
+        "legacy-token",
+        datetime.now() + timedelta(hours=1),
+        legacy_file,
+        response_data={"token_type": "Bearer", "expires_in": 3600},
+    )
+
+    class Client:
+        async def post(self, *args, **kwargs):
+            raise AssertionError("legacy token migration should avoid network call")
+
+    token = await auth.get_access_token(Client(), "https://example.com", legacy_file)
+
+    assert token == "legacy-token"
+    assert not legacy_file.exists()
+    row = get_kis_api_access_token(_cache_key("REAL", "12345678", "app-key-1"))
+    assert row is not None
+    assert row["migrated_from_file"] is True
+
+
+@pytest.mark.anyio
+async def test_get_access_token_ignores_legacy_file_when_db_row_exists(local_token_cache_env):
+    _insert_cached_row(token="db-token")
+    legacy_file = Path(local_token_cache_env) / "tokens" / "token_12345678.json"
+    auth.save_token("legacy-token", datetime.now() + timedelta(hours=1), legacy_file)
+
+    class Client:
+        async def post(self, *args, **kwargs):
+            raise AssertionError("valid db row should avoid network call")
+
+    token = await auth.get_access_token(Client(), "https://example.com", legacy_file)
+
+    assert token == "db-token"
+    assert legacy_file.exists()
+
+
+@pytest.mark.anyio
+async def test_get_access_token_serializes_refreshes_per_cache_key(local_token_cache_env):
+    class Response:
+        status_code = 200
+
+        @property
+        def text(self):
+            return "ok"
+
+        def json(self):
+            return {
+                "access_token": "shared-token",
+                "token_type": "Bearer",
+                "expires_in": 86400,
+            }
+
+    class Client:
+        def __init__(self):
+            self.calls = 0
+
+        async def post(self, *args, **kwargs):
+            self.calls += 1
+            await asyncio.sleep(0.05)
+            return Response()
+
+    client = Client()
+    tokens = await asyncio.gather(
+        auth.get_access_token(client, "https://example.com"),
+        auth.get_access_token(client, "https://example.com"),
+    )
+
+    assert tokens == ["shared-token", "shared-token"]
+    assert client.calls == 1
+
+
+@pytest.mark.anyio
+async def test_get_access_token_does_not_reuse_old_row_after_app_key_change(
+    local_token_cache_env,
+    monkeypatch,
+):
+    _insert_cached_row(token="token-for-key-1")
+
+    class Response:
+        status_code = 200
+
+        @property
+        def text(self):
+            return "ok"
+
+        def json(self):
+            return {
+                "access_token": "token-for-key-2",
+                "token_type": "Bearer",
+                "expires_in": 86400,
+            }
+
+    class Client:
+        def __init__(self):
+            self.calls = 0
+
+        async def post(self, *args, **kwargs):
+            self.calls += 1
+            return Response()
+
+    monkeypatch.setenv("KIS_APP_KEY", "app-key-2")
+    monkeypatch.setenv("KIS_APP_SECRET", "app-secret-2")
+
+    client = Client()
+    token = await auth.get_access_token(client, "https://example.com")
+
+    assert token == "token-for-key-2"
+    assert client.calls == 1
+    row_count = get_connection().execute("SELECT count(*) FROM kis_api_access_tokens").fetchone()[0]
+    assert row_count == 2
+
+
+@pytest.mark.anyio
+async def test_cached_token_survives_connection_restart(local_token_cache_env):
+    class Response:
+        status_code = 200
+
+        @property
+        def text(self):
+            return "ok"
+
+        def json(self):
+            return {
+                "access_token": "persisted-token",
+                "token_type": "Bearer",
+                "expires_in": 86400,
+            }
+
+    class WriteClient:
+        async def post(self, *args, **kwargs):
+            return Response()
+
+    first_token = await auth.get_access_token(WriteClient(), "https://example.com")
+    assert first_token == "persisted-token"
+
+    close_connection()
+
+    class ReadClient:
+        async def post(self, *args, **kwargs):
+            raise AssertionError("reopened DB should still reuse cached token")
+
+    second_token = await auth.get_access_token(ReadClient(), "https://example.com")
+    assert second_token == "persisted-token"
+
+
+@pytest.mark.anyio
+async def test_get_hashkey_posts_to_hashkey_endpoint(local_token_cache_env):
     class Response:
         status_code = 200
 

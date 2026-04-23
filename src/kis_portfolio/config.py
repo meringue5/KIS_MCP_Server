@@ -49,3 +49,29 @@ def get_motherduck_database() -> str:
 
 def get_motherduck_token() -> str:
     return os.environ.get("MOTHERDUCK_TOKEN", "").strip()
+
+
+def get_remote_auth_mode() -> str:
+    return os.environ.get("KIS_REMOTE_AUTH_MODE", "bearer").strip().lower()
+
+
+def get_auth_issuer_url() -> str:
+    return os.environ.get("KIS_AUTH_ISSUER_URL", "").strip()
+
+
+def get_resource_server_url() -> str:
+    return os.environ.get("KIS_RESOURCE_SERVER_URL", "").strip()
+
+
+def get_auth_required_scopes() -> list[str]:
+    value = os.environ.get("KIS_AUTH_REQUIRED_SCOPES", "mcp:read").strip()
+    return [scope for scope in value.split() if scope]
+
+
+def get_auth_allowed_scopes() -> list[str]:
+    value = os.environ.get("KIS_AUTH_ALLOWED_SCOPES", "mcp:read offline_access").strip()
+    return [scope for scope in value.replace(",", " ").split() if scope]
+
+
+def get_auth_token_pepper() -> str:
+    return os.environ.get("KIS_AUTH_TOKEN_PEPPER", "").strip()
