@@ -132,3 +132,27 @@ def test_scheduler_command_targets_cloud_run_job_run_endpoint():
     assert uri in command
     assert "--message-body" in command
     assert "{}" in command
+    assert "--headers" in command
+
+
+def test_scheduler_update_command_uses_update_headers_flag():
+    uri = deploy_cloud_run._build_run_job_uri(
+        project="kis-portfolio-prod",
+        region="asia-northeast3",
+        job="kis-portfolio-domestic-order-history",
+    )
+
+    command = deploy_cloud_run._build_scheduler_http_command(
+        action="update",
+        scheduler="kis-portfolio-domestic-order-history-1535",
+        scheduler_region="asia-northeast3",
+        schedule="35 15 * * 1-5",
+        time_zone="Asia/Seoul",
+        uri=uri,
+        service_account="scheduler@kis-portfolio-prod.iam.gserviceaccount.com",
+        project="kis-portfolio-prod",
+    )
+
+    assert command[:5] == ["gcloud", "scheduler", "jobs", "update", "http"]
+    assert "--update-headers" in command
+    assert "--headers" not in command

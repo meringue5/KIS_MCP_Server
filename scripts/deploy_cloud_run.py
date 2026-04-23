@@ -271,6 +271,7 @@ def _build_scheduler_http_command(
     service_account: str,
     project: str | None,
 ) -> list[str]:
+    header_flag = "--headers" if action == "create" else "--update-headers"
     command = [
         "gcloud",
         "scheduler",
@@ -288,7 +289,7 @@ def _build_scheduler_http_command(
         uri,
         "--http-method",
         "POST",
-        "--headers",
+        header_flag,
         "Content-Type=application/json",
         "--message-body",
         "{}",
