@@ -1,9 +1,6 @@
 name: Deploy Cloud Run
 
 on:
-  push:
-    branches:
-      - master
   workflow_dispatch:
     inputs:
       target:
@@ -84,7 +81,7 @@ jobs:
           project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
 
       - name: Deploy auth service
-        if: github.event_name == 'push' || github.event.inputs.target == 'all' || github.event.inputs.target == 'auth'
+        if: github.event.inputs.target == 'all' || github.event.inputs.target == 'auth'
         run: |
           uv run python scripts/deploy_cloud_run.py auth \
             --project "${GOOGLE_CLOUD_PROJECT}" \
@@ -92,7 +89,7 @@ jobs:
             --service "${KIS_AUTH_SERVICE_NAME:-kis-portfolio-auth}"
 
       - name: Deploy remote service
-        if: github.event_name == 'push' || github.event.inputs.target == 'all' || github.event.inputs.target == 'remote'
+        if: github.event.inputs.target == 'all' || github.event.inputs.target == 'remote'
         run: |
           uv run python scripts/deploy_cloud_run.py remote \
             --project "${GOOGLE_CLOUD_PROJECT}" \
@@ -100,7 +97,7 @@ jobs:
             --service "${KIS_REMOTE_SERVICE_NAME:-kis-portfolio-remote}"
 
       - name: Deploy domestic order history batch job
-        if: github.event_name == 'push' || github.event.inputs.target == 'all' || github.event.inputs.target == 'batch'
+        if: github.event.inputs.target == 'all' || github.event.inputs.target == 'batch'
         run: |
           uv run python scripts/deploy_cloud_run.py batch \
             --project "${GOOGLE_CLOUD_PROJECT}" \
@@ -108,7 +105,7 @@ jobs:
             --job "${KIS_BATCH_JOB_NAME:-kis-portfolio-domestic-order-history}"
 
       - name: Deploy domestic order history scheduler
-        if: github.event_name == 'push' || github.event.inputs.target == 'all' || github.event.inputs.target == 'scheduler'
+        if: github.event.inputs.target == 'all' || github.event.inputs.target == 'scheduler'
         run: |
           uv run python scripts/deploy_cloud_run.py scheduler \
             --project "${GOOGLE_CLOUD_PROJECT}" \

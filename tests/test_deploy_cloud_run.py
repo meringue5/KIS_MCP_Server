@@ -29,6 +29,24 @@ def test_remote_deploy_defaults_to_chatgpt_friendly_oauth():
     assert payload["KIS_REMOTE_AUTH_MODE"] == "oauth"
 
 
+def test_auth_deploy_defaults_to_single_instance():
+    env = {}
+
+    runtime_flags = deploy_cloud_run._build_auth_runtime_flags(env)
+
+    assert runtime_flags == ["--max-instances", "1"]
+
+
+def test_auth_deploy_keeps_explicit_max_instance_override():
+    env = {
+        "KIS_CLOUD_RUN_AUTH_MAX_INSTANCES": "2",
+    }
+
+    runtime_flags = deploy_cloud_run._build_auth_runtime_flags(env)
+
+    assert runtime_flags == ["--max-instances", "2"]
+
+
 def test_remote_deploy_keeps_explicit_bearer_override():
     env = {
         "KIS_DB_MODE": "local",
@@ -66,6 +84,14 @@ def test_batch_deploy_builds_batch_runtime_env_without_remote_auth_fields():
     assert payload["KIS_APP_KEY_RIA"] == "app-key"
     assert payload["KIS_ACNT_PRDT_CD_RIA"] == "01"
     assert "KIS_REMOTE_AUTH_MODE" not in payload
+
+
+def test_remote_runtime_flags_keep_existing_safe_defaults():
+    env = {}
+
+    runtime_flags = deploy_cloud_run._build_remote_runtime_flags(env)
+
+    assert runtime_flags == ["--concurrency", "20", "--max-instances", "1"]
 
 
 def test_scheduler_service_account_defaults_to_project_compute_account():

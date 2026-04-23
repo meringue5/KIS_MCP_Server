@@ -19,6 +19,7 @@ DEFAULT_REMOTE_SERVICE = "kis-portfolio-remote"
 DEFAULT_AUTH_SERVICE = "kis-portfolio-auth"
 DEFAULT_BATCH_JOB = "kis-portfolio-domestic-order-history"
 DEFAULT_BATCH_SCHEDULER = "kis-portfolio-domestic-order-history-1535"
+DEFAULT_AUTH_MAX_INSTANCES = "1"
 DEFAULT_REMOTE_CONCURRENCY = "20"
 DEFAULT_REMOTE_MAX_INSTANCES = "1"
 DEFAULT_CHATGPT_REMOTE_AUTH_MODE = "oauth"
@@ -161,6 +162,22 @@ def _build_batch_env(env: dict[str, str]) -> dict[str, str]:
     payload = {key: env[key] for key in keys if env.get(key, "") != ""}
     payload.update(_collect_prefixed(env, ("KIS_APP_KEY_", "KIS_APP_SECRET_", "KIS_CANO_", "KIS_ACNT_PRDT_CD_")))
     return payload
+
+
+def _build_auth_runtime_flags(env: dict[str, str]) -> list[str]:
+    return [
+        "--max-instances",
+        env.get("KIS_CLOUD_RUN_AUTH_MAX_INSTANCES", DEFAULT_AUTH_MAX_INSTANCES),
+    ]
+
+
+def _build_remote_runtime_flags(env: dict[str, str]) -> list[str]:
+    return [
+        "--concurrency",
+        env.get("KIS_CLOUD_RUN_REMOTE_CONCURRENCY", DEFAULT_REMOTE_CONCURRENCY),
+        "--max-instances",
+        env.get("KIS_CLOUD_RUN_REMOTE_MAX_INSTANCES", DEFAULT_REMOTE_MAX_INSTANCES),
+    ]
 
 
 def _validate_required(env: dict[str, str], required: list[str]) -> list[str]:
@@ -431,7 +448,7 @@ def main() -> int:
             args=args,
             project=project,
             payload=_build_auth_env(env),
-            runtime_flags=[],
+            runtime_flags=_build_auth_runtime_flags(env),
             target_name=args.service or DEFAULT_AUTH_SERVICE,
             command_args="run,kis-portfolio-auth",
             is_job=False,
@@ -448,12 +465,7 @@ def main() -> int:
             args=args,
             project=project,
             payload=_build_remote_env(env),
-            runtime_flags=[
-                "--concurrency",
-                env.get("KIS_CLOUD_RUN_REMOTE_CONCURRENCY", DEFAULT_REMOTE_CONCURRENCY),
-                "--max-instances",
-                env.get("KIS_CLOUD_RUN_REMOTE_MAX_INSTANCES", DEFAULT_REMOTE_MAX_INSTANCES),
-            ],
+            runtime_flags=_build_remote_runtime_flags(env),
             target_name=args.service or DEFAULT_REMOTE_SERVICE,
             command_args="run,kis-portfolio-remote",
             is_job=False,

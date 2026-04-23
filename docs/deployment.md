@@ -29,10 +29,12 @@ ChatGPT 호환과 운영 배포의 기본 경로다. 구조는 **별도 auth ser
 - required scope: `mcp:read`
 - resource server는 MCP OAuth discovery를 위해 다음 공개 endpoint를 제공한다.
   - `/.well-known/oauth-protected-resource`
-  - `/.well-known/oauth-protected-resource/mcp`
-  - `/.well-known/oauth-authorization-server`
-  - `/authorize`는 auth server `/authorize`로 redirect
-  - `/register`, `/token`, `/revoke`는 auth server로 proxy
+- `/.well-known/oauth-protected-resource/mcp`
+- `/.well-known/oauth-authorization-server`
+- `/authorize`는 auth server `/authorize`로 redirect
+- `/register`, `/token`, `/revoke`는 auth server로 proxy
+- Cloud Run auth는 기본적으로 `max-instances=1`로 배포한다.
+  현재 운영 가정이 단일 소유자 interactive auth flow이기 때문에 기본값을 보수적으로 둔다.
 - Cloud Run remote는 기본적으로 `max-instances=1`, `concurrency=20`으로 배포한다.
   Streamable HTTP 세션은 프로세스 메모리에 있고, 같은 세션에서 long-running GET과 POST가 동시에 들어오기 때문이다.
 
@@ -238,12 +240,11 @@ Cloud Scheduler는 Cloud Run Job의 `https://run.googleapis.com/v2/projects/PROJ
 
 `KIS_CLOUD_SCHEDULER_INVOKER_SERVICE_ACCOUNT`를 비워두면 `GOOGLE_CLOUD_PROJECT_NUMBER` 또는 `gcloud projects describe ... --format=value(projectNumber)` 결과를 사용해 기본 compute service account (`PROJECT_NUMBER-compute@developer.gserviceaccount.com`)를 fallback으로 잡는다.
 
-## GitHub Actions 자동 배포
+## GitHub Actions 수동 배포
 
 이 저장소에는 [.github/workflows/deploy-cloud-run.yml](../.github/workflows/deploy-cloud-run.yml) 이 포함되어 있다.
 
 - trigger:
-  - `push` to `master`
   - `workflow_dispatch` with `all`, `auth`, `remote`, `batch`, `scheduler`
 - 순서:
   - `uv run pytest`
@@ -251,6 +252,7 @@ Cloud Scheduler는 Cloud Run Job의 `https://run.googleapis.com/v2/projects/PROJ
   - `remote` 서비스 배포
   - `batch` Job 배포
   - `scheduler` 배포
+- `master`에 push만 해서는 배포되지 않는다.
 - 배포 방식:
   - GitHub Actions가 Workload Identity Federation으로 Google Cloud에 로그인
   - workflow가 `KIS_DEPLOY_ENV` secret을 `.env`로 복원
@@ -268,6 +270,9 @@ Cloud Scheduler는 Cloud Run Job의 `https://run.googleapis.com/v2/projects/PROJ
   - `KIS_DEPLOY_REGION` (선택)
   - `KIS_AUTH_SERVICE_NAME` (선택)
   - `KIS_REMOTE_SERVICE_NAME` (선택)
+  - `KIS_CLOUD_RUN_AUTH_MAX_INSTANCES` (선택, 기본값 `1`)
+  - `KIS_CLOUD_RUN_REMOTE_CONCURRENCY` (선택, 기본값 `20`)
+  - `KIS_CLOUD_RUN_REMOTE_MAX_INSTANCES` (선택, 기본값 `1`)
   - `KIS_BATCH_JOB_NAME` (선택)
   - `KIS_BATCH_SCHEDULER_NAME` (선택)
   - `KIS_CLOUD_SCHEDULER_REGION` (선택)
