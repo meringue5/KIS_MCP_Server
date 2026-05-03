@@ -15,7 +15,7 @@ import httpx
 
 from .config import get_token_dir
 from .db.kis_token_repository import get_kis_api_access_token, upsert_kis_api_access_token
-from .kis_token_crypto import (
+from .security.token_encryption import (
     TokenDecryptionError,
     TokenEncryptionConfigError,
     decrypt_token,

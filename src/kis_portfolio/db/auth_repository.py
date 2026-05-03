@@ -6,8 +6,8 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
+from kis_portfolio.common.values import json_loads
 from kis_portfolio.db.connection import get_connection
-from kis_portfolio.db.utils import json_loads
 
 
 def _utcnow() -> datetime:

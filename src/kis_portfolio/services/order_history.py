@@ -9,10 +9,10 @@ from zoneinfo import ZoneInfo
 
 from kis_portfolio.account_registry import load_account_registry, scoped_account_env
 from kis_portfolio.accounts import infer_account_type
+from kis_portfolio.common.values import to_int
 from kis_portfolio.services.market_calendar import evaluate_krx_collection_gate
 from kis_portfolio.services import kis_api
 from kis_portfolio import db as kisdb
-from kis_portfolio.db.utils import to_int
 
 
 logger = logging.getLogger(__name__)

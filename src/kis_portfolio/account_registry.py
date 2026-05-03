@@ -7,6 +7,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterator, Mapping
 
+from kis_portfolio.security.redaction import mask_account_id
+
 
 ACCOUNT_SPECS = [
     ("ria", "RIA", "위험자산 일임"),
@@ -34,9 +36,7 @@ class AccountConfig:
 
     @property
     def masked_cano(self) -> str:
-        if len(self.cano) <= 4:
-            return "*" * len(self.cano)
-        return f"{self.cano[:2]}{'*' * max(len(self.cano) - 4, 0)}{self.cano[-2:]}"
+        return mask_account_id(self.cano)
 
     def runtime_env(self) -> dict[str, str]:
         return {

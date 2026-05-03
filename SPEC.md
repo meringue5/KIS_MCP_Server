@@ -4,6 +4,7 @@
 
 한국투자증권(KIS) Open API를 기반으로 개인 포트폴리오 조회, 이력 저장, 분석, 향후 원격 접근을
 제공하는 서비스 구축.
+장기 제품 비전은 개인 자산 포트폴리오 관리와 데이터 분석 기반 투자 의사결정 war-room 구축이다.
 
 MCP는 이 서비스의 주요 인터페이스 중 하나이며, 프로젝트의 중심은 MCP tool 자체가 아니라
 KIS API client, 계좌 오케스트레이션, MotherDuck 기반 데이터 저장/분석, 보안 정책이다.
@@ -376,6 +377,49 @@ client-specific discovery와 대화 단위 attachment 상태를 별도 호환성
 - auth discovery alias: `/.well-known/openid-configuration`
 - ChatGPT 재검증 절차: connector 재연결 후 `새 대화`에서 tool 호출 확인
 - Claude 재검증 절차: 설정 화면과 별개로 실제 대화에서 tool 호출 확인
+
+---
+
+### ADR-016: 시크릿과 토큰 관리 원칙은 별도 보안 문서로 분리
+
+**결정**: 인증/시크릿/key/token의 source of truth, DB 저장 가능 여부, 저장 형태, 회전 절차는
+`docs/security-and-secrets.md`를 canonical policy로 둔다. `SPEC.md`는 장기 설계 결정만 남기고,
+`docs/deployment.md`는 배포 절차와 서비스별 env 목록만 유지한다.
+
+**이유**:
+- KIS app secret, MotherDuck token, OAuth provider secret, encryption key, OAuth pepper, 서비스 발급 token은
+  수명과 저장 방식이 서로 다르다.
+- 보안 원칙이 README, deployment 문서, architecture 문서, AGENTS context에 흩어지면 운영 중 어떤 값이
+  DB에 있어도 되는지 판단하기 어렵다.
+- GitHub `KIS_DEPLOY_ENV`, local `.env`, Cloud Run runtime env, MotherDuck DB의 역할을 명확히 분리해야
+  누락, 중복 저장, 로그 노출, 잘못된 rotation을 줄일 수 있다.
+
+**현재 적용**:
+- 장기 provider credential은 DB에 저장하지 않고 runtime env 또는 플랫폼 secret store로 주입한다.
+- KIS API access token은 `kis_api_access_tokens`에 암호화 ciphertext로만 저장한다.
+- MCP OAuth access/refresh token, authorization code, client secret은 digest/hash로만 저장한다.
+- default Parquet backup은 OAuth state table과 `kis_api_access_tokens`를 제외한다.
+- rotation 및 incident response runbook은 `docs/security-and-secrets.md`에 둔다.
+
+---
+
+### ADR-017: 보안 primitive와 순수 공통 유틸을 별도 패키지로 분리
+
+**결정**: cross-cutting 보안 primitive는 `kis_portfolio.security`, side effect 없는 값 변환 helper는
+`kis_portfolio.common`에 둔다. 기존 import 경로는 compatibility shim으로 유지한다.
+
+**이유**:
+- KIS token 암복호화, OAuth token digest/client secret hashing, redaction은 adapter와 service 여러 경계에서
+  공유되지만 auth server 자체나 DB repository와는 다른 책임이다.
+- JSON/date/numeric 변환 helper는 DB와 analytics가 함께 쓰지만 DB 연결이나 schema 책임은 아니다.
+- war-room/backend/ETL 확장을 위해 adapter, service, analytics, db, security, common 경계를 미리 명확히 한다.
+
+**현재 적용**:
+- `kis_portfolio.security.token_encryption`: KIS access token cache 암복호화
+- `kis_portfolio.security.oauth_crypto`: OAuth opaque token digest와 client secret hash/verify
+- `kis_portfolio.security.redaction`: 계좌번호 마스킹과 shallow secret redaction
+- `kis_portfolio.common.values`: JSON-safe/date/numeric 변환 helper
+- `kis_portfolio.kis_token_crypto`, `kis_portfolio.adapters.auth.crypto`, `kis_portfolio.db.utils`는 호환 shim
 
 ---
 

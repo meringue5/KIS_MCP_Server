@@ -24,7 +24,7 @@ core service 함수와 저장 정책을 설계한다.
 | Master Data | 국내/해외 종목코드, 업종, 테마, 회원사, 상품 메타데이터 | 국내 master ingestion v1 구현 | 공식 `stocks_info` 예제를 ingestion 기준으로 사용 |
 | Analytics | 최신 합산, 일별 변화, 추세, 이상치, 볼린저 밴드 | 일부 구현 | canonical 총자산과 feeder 분석을 분리 유지 |
 | Realtime | websocket 실시간 시세/체결통보 | 미구현 | 원격 배포와 auth 설계 이후 검토 |
-| Remote Access | Streamable HTTP MCP, web/backend hosting | bearer baseline 구현 | read-only remote와 OAuth/OIDC 검토 |
+| Remote Access | Streamable HTTP MCP, web/backend hosting | OAuth remote 구현 | read-only remote와 future backend HTTP API 검토 |
 
 ## Near-Term API Priorities
 
@@ -60,11 +60,15 @@ kis_portfolio.services / kis_portfolio.clients
         ↓
 repositories / warehouse / analytics
         ↓
-adapters: local MCP, remote MCP, batch jobs, future web API
+adapters: local MCP, remote MCP, batch jobs, future backend HTTP API
 ```
 
 현재 public MCP adapter는 `src/kis_portfolio/adapters/mcp/server.py`이며, KIS 호출 로직은
 `services/` 아래로 이동하는 중이다.
+
+Future backend API는 별도 public surface가 필요해지는 시점에 `adapters/http` 후보로 둔다. ETL orchestration은
+현재 `adapters/batch + services` 조합을 유지하고, 독립 ETL workflow가 여러 개로 늘어나면 `pipelines`
+패키지를 재검토한다. 이번 경량 리팩터에서는 `pipelines` 패키지를 만들지 않는다.
 
 ## Repository Identity
 

@@ -108,17 +108,17 @@ MotherDuck/local DuckDB의 `kis_api_access_tokens` 테이블에 암호화해 저
 
 ## Secret 원칙
 
-KIS API key, app secret, 계좌번호, MotherDuck token은 이미지에 포함하지 않는다.
-배포 플랫폼의 runtime secret/env store에 넣고 컨테이너 실행 시 환경변수로 주입한다.
+시크릿과 토큰 관리의 canonical policy는 [Security and Secrets](./security-and-secrets.md)를 따른다.
+이 문서는 배포에 필요한 환경변수와 절차만 다룬다.
 
-암호화된 KIS token cache row는 운영 DB에 저장될 수 있다. raw KIS access token 평문과 app secret은
-이미지, 로그, analytics table, MCP 응답에 포함하지 않는다.
+배포 시 특히 지켜야 할 원칙:
 
-GitHub Secrets는 다음 용도로만 사용한다.
-
-- 배포 플랫폼 API token
-- CI/CD에서 필요한 최소 권한 credential
-- 플랫폼 secret을 갱신하는 자동화가 필요한 경우의 입력값
+- KIS API key, app secret, 계좌번호, MotherDuck token은 이미지에 포함하지 않는다.
+- 장기 credential은 runtime env 또는 플랫폼 secret store로만 주입한다.
+- 서비스가 발급받은 KIS access token은 DB에 암호화 저장할 수 있고, MCP OAuth token은 DB에 digest로만 저장한다.
+- raw token과 app secret은 로그, analytics table, MCP 응답에 포함하지 않는다.
+- 전체 계좌번호는 운영 DB row와 백업에 포함될 수 있으므로 민감 데이터로 취급하고, 로그와 MCP 계좌 메타데이터에서는 마스킹한다.
+- GitHub `KIS_DEPLOY_ENV`는 운영용 `.env` 전체를 담는 고위험 배포 입력이다. 출력하거나 로그에 남기지 않는다.
 
 ## 추천 배포 경로
 
@@ -279,7 +279,7 @@ Cloud Scheduler는 Cloud Run Job의 `https://run.googleapis.com/v2/projects/PROJ
   - `KIS_BATCH_SCHEDULER_NAME` (선택)
   - `KIS_CLOUD_SCHEDULER_REGION` (선택)
 
-`KIS_DEPLOY_ENV`는 배포용 `.env` 전체 내용을 멀티라인 그대로 넣는 방식을 전제로 한다. 로컬 `.env`와 동일하게 관리하되, 운영용 값만 담는 별도 파일에서 복사하는 편이 안전하다.
+`KIS_DEPLOY_ENV`는 배포용 `.env` 전체 내용을 멀티라인 그대로 넣는 방식을 전제로 한다. 로컬 `.env`와 동일하게 관리하되, 운영용 값만 담는 별도 파일에서 복사하는 편이 안전하다. 포함되는 값과 회전 원칙은 [Security and Secrets](./security-and-secrets.md)를 기준으로 한다.
 
 Google Cloud 권장 인증 방식:
 

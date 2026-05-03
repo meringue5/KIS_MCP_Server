@@ -1,0 +1,139 @@
+# Security and Secrets
+
+이 문서는 KIS Portfolio Service의 인증, 시크릿, 토큰 관리 원칙과 현재 source of truth를 한곳에 모은다.
+배포 절차는 `docs/deployment.md`, DB/백업 절차는 `docs/backup.md`, 장기 아키텍처 결정은 `SPEC.md`와
+`ARCHITECTURE.md`를 참고한다.
+
+## 기본 원칙
+
+- Provider가 발급한 장기 credential은 DB에 저장하지 않는다. KIS app secret, MotherDuck token,
+  OAuth provider secret, Cloud/GitHub credential은 runtime env 또는 플랫폼 secret store로만 주입한다.
+- 서비스가 런타임에 발급받는 단기 토큰만 DB에 저장할 수 있다. KIS API access token은 암호화 ciphertext로,
+  MCP OAuth access/refresh token과 authorization code는 digest로만 저장한다.
+- raw token과 app secret은 로그, analytics table, MCP 응답, issue/PR 본문에 넣지 않는다.
+- 전체 계좌번호는 운영 DB row와 백업에 포함될 수 있으므로 민감 데이터로 취급한다. 로그와 MCP 계좌
+  메타데이터에서는 마스킹한다.
+- 운영 DB는 MotherDuck이다. `KIS_DB_MODE=motherduck`에서 `MOTHERDUCK_TOKEN`이 없으면 실패해야 하며,
+  조용히 local DuckDB로 fallback하지 않는다.
+- 로컬 개발의 source of truth는 `.env`이고, `.env`는 커밋하지 않는다.
+- 현재 CI/CD의 배포 source는 GitHub Environment secret `KIS_DEPLOY_ENV`다. 이 값은 운영용 `.env` 전체를
+  담는 편의적 배포 입력이며, 장기적으로는 개별 secret 또는 Secret Manager로 쪼갤 수 있다.
+
+## Trust Boundaries
+
+- Local developer machine: `.env`, local DuckDB, legacy `var/tokens/token_{CANO}.json` migration input을 가진다.
+- GitHub Actions: `KIS_DEPLOY_ENV`를 `.env`로 복원하고 Cloud Run 배포 스크립트를 실행한다.
+- Cloud Run auth service: MCP OAuth authorization server다. owner login, consent, token issuance를 담당한다.
+- Cloud Run remote service: MCP resource server다. OAuth bearer token을 검증하고 KIS 조회 tool을 실행한다.
+- Cloud Run batch job: 예약 수집 job이다. KIS/MotherDuck runtime env를 사용하지만 MCP OAuth client token은 쓰지 않는다.
+- MotherDuck: 운영 데이터베이스다. portfolio data, encrypted KIS token cache, OAuth digest state를 저장한다.
+- KIS Open API: app key/secret으로 KIS API access token을 발급한다.
+- Claude/ChatGPT clients: MCP OAuth access token을 bearer로 보내고 refresh token을 클라이언트 쪽에 보관한다.
+
+## Secret Inventory
+
+| Name or pattern | Source of truth | Runtime consumer | DB storage | Stored form | Rotation notes |
+| --- | --- | --- | --- | --- | --- |
+| `KIS_APP_KEY_{ACCOUNT}` | KIS developer console, local `.env`, GitHub `KIS_DEPLOY_ENV` | local MCP, remote, batch | No | env only | Update `.env`/`KIS_DEPLOY_ENV`, redeploy. Cache key includes app key, so new keys create new KIS token cache rows. |
+| `KIS_APP_SECRET_{ACCOUNT}` | KIS developer console, local `.env`, GitHub `KIS_DEPLOY_ENV` | local MCP, remote, batch | No | env only | Update `.env`/`KIS_DEPLOY_ENV`, redeploy. Clear stale KIS token cache if the old secret is revoked before token expiry. |
+| `KIS_CANO_{ACCOUNT}` | User account records, local `.env`, GitHub `KIS_DEPLOY_ENV` | local MCP, remote, batch | Yes, in portfolio/order rows | Account id in operational data | Treat as sensitive. MCP account metadata must mask it, but DB snapshots and backups may contain full account ids. |
+| `KIS_ACNT_PRDT_CD_{ACCOUNT}` | User account records, local `.env`, GitHub `KIS_DEPLOY_ENV` | local MCP, remote, batch | Yes, in order/canonical rows where needed | Product code | Needed for IRP/pension API routing and order identity. |
+| `MOTHERDUCK_TOKEN` | MotherDuck console, local `.env`, GitHub `KIS_DEPLOY_ENV` | local MCP, auth, remote, batch, backup | No | env only | Rotate in MotherDuck, update `.env`/`KIS_DEPLOY_ENV`, redeploy all services/jobs. |
+| `MOTHERDUCK_DATABASE` | Config | local MCP, auth, remote, batch, backup | No | env only | Not secret, but must match across auth and remote. |
+| `KIS_TOKEN_ENCRYPTION_KEY` | Generated Fernet key, local `.env`, GitHub `KIS_DEPLOY_ENV` | local MCP, remote, batch | No | env only | Protect carefully. Rotation requires re-encrypting or deleting `kis_api_access_tokens`; otherwise cached KIS tokens become unreadable. |
+| KIS API access token | KIS token endpoint response | local MCP, remote, batch | Yes | encrypted `token_ciphertext` in `kis_api_access_tokens` | Automatically refreshed when expired or near expiry. Never log or return raw token. |
+| `KIS_AUTH_TOKEN_PEPPER` | Generated secret, local `.env`, GitHub `KIS_DEPLOY_ENV` | auth and remote | No | env only | Must be identical on auth and remote. Rotation invalidates existing OAuth token digests unless users reconnect. |
+| MCP OAuth access token | auth server generated value | Claude/ChatGPT bearer requests | Yes | digest only in `oauth_tokens` | Short-lived. Raw value is not recoverable from DB. |
+| MCP OAuth refresh token | auth server generated value | Claude/ChatGPT token refresh | Yes | digest only in `oauth_tokens` | Rotated on refresh. Pepper rotation or expiry requires connector reauthorization. |
+| OAuth authorization code | auth server generated value | OAuth code exchange | Yes | digest only in `oauth_authorization_codes` | One-time use and short-lived. |
+| OAuth dynamic client secret | auth server generated value | ChatGPT dynamic client token endpoint | Yes | hash in `oauth_clients` | Raw value is returned once to client and not recoverable from DB. |
+| `KIS_AUTH_CLAUDE_CLIENT_ID` | Local `.env`, GitHub `KIS_DEPLOY_ENV` | auth server, Claude static client | Yes | `client_id` in `oauth_clients` | Not secret by itself. Keep stable unless recreating the Claude app/client. |
+| `KIS_AUTH_CLAUDE_CLIENT_SECRET` | Local `.env`, GitHub `KIS_DEPLOY_ENV` | auth server, Claude static client | Yes | hash in `oauth_clients` | Update env and redeploy auth. Existing client configuration must use the new secret. |
+| `KIS_AUTH_SESSION_SECRET` | Generated secret, local `.env`, GitHub `KIS_DEPLOY_ENV` | auth server browser session | No | env only | Rotation invalidates pending browser login sessions, not already issued OAuth tokens. |
+| `KIS_AUTH_OWNER_EMAILS` | Local `.env`, GitHub `KIS_DEPLOY_ENV` | auth server allowlist | Yes | auth user rows may store email/profile | Treat as personal data. Controls who may authorize MCP access. |
+| `KIS_OAUTH_GOOGLE_CLIENT_ID/SECRET` | Google Cloud OAuth app | auth server | No | env only | Rotate in Google Cloud, update `.env`/`KIS_DEPLOY_ENV`, redeploy auth. |
+| `KIS_OAUTH_GITHUB_CLIENT_ID/SECRET` | GitHub OAuth app | auth server | No | env only | Rotate in GitHub, update `.env`/`KIS_DEPLOY_ENV`, redeploy auth. |
+| `KIS_REMOTE_AUTH_TOKEN` | Generated secret | remote bearer fallback only | No | env only | Bearer mode is for experiments. Rotate token and update clients together. |
+| `KIS_DEPLOY_ENV` | GitHub Environment secret | GitHub Actions deployment | No | GitHub secret | High-value bundle containing operational env. Do not echo it in logs. Prefer Environment protection rules. |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | GitHub Environment secret | GitHub Actions auth | No | GitHub secret | Deployment control plane credential/config. Keep scoped to this repository/environment. |
+| `GCP_SERVICE_ACCOUNT` | GitHub Environment secret or var | GitHub Actions auth | No | GitHub secret/var | Not a password, but grants deployment authority through WIF. Keep least-privilege IAM. |
+
+## Runtime Env vs DB State
+
+Runtime env is the source of truth for long-lived provider credentials and encryption/digest secrets. DB state is the
+source of truth for service-issued state: portfolio snapshots, KIS token cache rows, OAuth grants, OAuth token digests,
+dynamic OAuth client metadata, and identity allowlist results.
+
+Do not move provider secrets into MotherDuck. MotherDuck can hold encrypted or hashed service-issued tokens, but it
+must not become the store for KIS app secrets, MotherDuck token, OAuth provider secrets, or encryption/pepper keys.
+
+## Token Storage Model
+
+KIS API token cache:
+
+- Table: `kis_api_access_tokens`
+- Key: `sha256("{KIS_ACCOUNT_TYPE}:{KIS_CANO}:{KIS_APP_KEY}")`
+- Sensitive value: KIS access token
+- Stored value: Fernet-encrypted `token_ciphertext`
+- Required env: `KIS_TOKEN_ENCRYPTION_KEY`
+- Expiry policy: treat as refreshable from `expires_at - 10 minutes`
+- Legacy migration input: `var/tokens/token_{CANO}.json`, then delete the file after migration
+
+MCP OAuth state:
+
+- Tables: `auth_users`, `auth_identities`, `oauth_clients`, `oauth_grants`, `oauth_authorization_codes`, `oauth_tokens`
+- Access/refresh tokens: digest only, using `KIS_AUTH_TOKEN_PEPPER`
+- Authorization codes: digest only, one-time use
+- Client secrets: hash only
+- Required env shared by auth and remote: `KIS_AUTH_TOKEN_PEPPER`
+- Required OAuth scope for MCP: `mcp:read`
+- `offline_access` should be advertised so clients can keep refresh-token based sessions
+
+## Backups
+
+Default Parquet backups exclude OAuth state tables and `kis_api_access_tokens`. Backups can still contain account ids,
+holdings, order history, and portfolio values, so treat backup folders as sensitive data.
+
+Do not commit `var/backup`, local DuckDB files, legacy token files, or exported Parquet snapshots. Store off-machine
+backups only in private locations with access controls.
+
+## Logging and MCP Responses
+
+- MCP account metadata should return masked account numbers only.
+- Token status tools may return storage, expiry, and health metadata, but must not return token values.
+- Exceptions and logs should avoid raw request headers, `authorization`, app secret, KIS access token, OAuth token,
+  MotherDuck token, and full account numbers.
+- Order tools remain disabled stubs until separate audit/confirmation and permission boundaries are designed.
+
+## Rotation Runbook
+
+1. Rotate the upstream secret in its provider console when applicable.
+2. Update local `.env` for manual/local usage.
+3. Update GitHub `KIS_DEPLOY_ENV` for Cloud Run deployments.
+4. Redeploy affected targets with `scripts/deploy_cloud_run.py`.
+5. Verify `/health`, OAuth discovery, token exchange or refresh, and a read-only MCP tool call.
+
+Special cases:
+
+- Rotating `KIS_TOKEN_ENCRYPTION_KEY` requires re-encrypting or clearing `kis_api_access_tokens`.
+- Rotating `KIS_AUTH_TOKEN_PEPPER` forces MCP clients to reconnect because existing OAuth token digests cannot be
+  recomputed.
+- Rotating `KIS_AUTH_SESSION_SECRET` only invalidates browser login sessions and pending auth flows.
+- Rotating KIS app keys/secrets may require deleting affected KIS token cache rows if old tokens continue to fail.
+
+## Incident Response
+
+If a long-lived provider secret leaks:
+
+1. Revoke or rotate it at the provider first.
+2. Update `.env` and `KIS_DEPLOY_ENV`.
+3. Redeploy every target that consumes it.
+4. Clear or invalidate derived token rows when needed.
+5. Check GitHub Actions logs, Cloud Run logs, local shell history, and backups for accidental exposure.
+
+If a DB-stored derived token leaks:
+
+- KIS access token ciphertext alone should not be usable without `KIS_TOKEN_ENCRYPTION_KEY`, but rotate the KIS API
+  token cache if key exposure is possible.
+- OAuth token digests are not bearer tokens, but rotate `KIS_AUTH_TOKEN_PEPPER` and force reconnect if pepper exposure
+  is possible.

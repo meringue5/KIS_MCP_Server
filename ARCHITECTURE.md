@@ -31,6 +31,8 @@ KIS_Portfolio_MCP/
 │       ├── services/          # account, market, profit service
 │       ├── clients/           # KIS API client helper
 │       ├── analytics/         # DB 기반 분석 함수
+│       ├── common/            # 순수 값 변환, JSON-safe helper
+│       ├── security/          # 암호화, OAuth crypto, redaction primitive
 │       └── db/                # DuckDB/MotherDuck 연결, 스키마, repository 함수
 ├── tests/                     # pytest 기반 테스트 위치
 ├── scripts/                   # 설치/점검/운영 스크립트
@@ -59,6 +61,8 @@ KIS_Portfolio_MCP/
 - remote MCP는 `kis-portfolio-remote`가 제공한다.
 - batch CLI는 `kis-portfolio-batch`가 제공한다.
 - OAuth auth server는 `kis-portfolio-auth`가 제공한다.
+- cross-cutting 보안 primitive는 `src/kis_portfolio/security/` 아래에 둔다.
+- side effect 없는 공통 값 변환 helper는 `src/kis_portfolio/common/` 아래에 둔다.
 
 ## 장기 목표
 
@@ -76,9 +80,15 @@ src/kis_portfolio/
 │       └── server.py
 ├── clients/
 │   └── kis.py
+├── common/
+│   └── values.py
 ├── services/
 │   ├── account.py
 │   └── kis_api.py
+├── security/
+│   ├── oauth_crypto.py
+│   ├── redaction.py
+│   └── token_encryption.py
 ├── db/
 │   ├── connection.py
 │   ├── schema.py
@@ -92,6 +102,19 @@ src/kis_portfolio/
 이 구조의 핵심은 MCP를 유일한 본체로 두지 않는 것이다. KIS API client, DB repository,
 analytics service를 내부 코어로 두고, MCP와 batch, 향후 HTTP/Web API는 같은 코어를 사용하는
 인터페이스가 되어야 한다.
+
+목표 패키지 경계:
+
+- `adapters`: MCP, remote HTTP transport, OAuth auth server, batch CLI, future backend HTTP API 같은 외부 진입점
+- `clients`: KIS 등 외부 API 호출을 위한 낮은 수준 HTTP client/helper
+- `services`: 계좌, 포트폴리오, 마켓데이터, 주문조회, ETL orchestration의 비즈니스 유스케이스
+- `analytics`: DB 기반 분석 쿼리와 war-room decision support 지표
+- `db`: 연결, schema, repository, 기본 조회/쓰기 함수
+- `security`: 암호화, OAuth crypto, redaction처럼 여러 레이어가 공유하는 보안 primitive
+- `common`: JSON/date/numeric 변환처럼 side effect 없는 순수 유틸
+
+`common`은 env, DB connection, HTTP client, KIS 도메인 판단 로직을 import하지 않는다. `security`는
+보안 primitive만 제공하며 OAuth auth server 자체는 `adapters/auth`에 둔다.
 
 ## DB와 런타임 파일
 
@@ -136,5 +159,15 @@ KIS_DATA_DIR=var
 
 ## 보안
 
-웹 호스팅을 도입할 때는 조회 기능과 주문 기능의 권한 경계를 분리하고, 로그에 token, app secret,
-계좌번호 전체가 남지 않도록 별도 보안 정책을 문서화해야 한다.
+시크릿과 토큰의 source of truth, DB 저장 가능 여부, 회전 절차는 `docs/security-and-secrets.md`를
+canonical policy로 둔다.
+
+아키텍처 관점의 경계는 다음과 같다.
+
+- 장기 provider credential은 runtime env 또는 플랫폼 secret store에만 둔다.
+- MotherDuck에는 운영 데이터, 암호화된 KIS token cache, OAuth digest state만 저장한다.
+- auth server는 OAuth 발급과 owner login을 담당하고, remote MCP는 bearer token 검증 뒤 read-only tool을 실행한다.
+- 로그와 MCP 계좌 메타데이터에는 전체 계좌번호를 노출하지 않는다. 운영 DB row와 백업은 계좌 id를
+  포함할 수 있으므로 민감 데이터로 취급한다.
+- raw token과 app secret은 로그, analytics table, MCP 응답에 포함하지 않는다.
+- 주문 tool은 disabled stub으로 유지하고, 별도 audit/confirmation/권한 분리 설계 전에는 실제 주문 API를 호출하지 않는다.

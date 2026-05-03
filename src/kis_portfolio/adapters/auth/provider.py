@@ -17,8 +17,13 @@ from mcp.server.auth.provider import (
 from mcp.shared.auth import OAuthClientMetadata
 
 from kis_portfolio.adapters.auth.config import StaticOAuthClientConfig
-from kis_portfolio.adapters.auth.crypto import digest_token, generate_token, hash_client_secret, verify_client_secret
 from kis_portfolio.db import auth_repository
+from kis_portfolio.security.oauth_crypto import (
+    digest_token,
+    generate_token,
+    hash_client_secret,
+    verify_client_secret,
+)
 
 
 def _to_timestamp(value: datetime | None) -> int | None:

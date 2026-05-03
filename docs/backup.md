@@ -39,6 +39,8 @@ var/backup/parquet/YYYYMMDD_HHMMSS/
 
 기본 백업은 analytics/raw/canonical 테이블만 대상으로 한다. OAuth 상태 테이블과 `kis_api_access_tokens`
 같은 민감한 인증/캐시 테이블은 기본 Parquet 백업 대상에 포함하지 않는다.
+다만 기본 백업에도 계좌 id, 보유 종목, 주문/체결 이력, 평가금액이 포함될 수 있으므로 백업 산출물은
+민감 데이터로 취급한다. 자세한 분류와 보관 원칙은 [Security and Secrets](./security-and-secrets.md)를 따른다.
 
 최근 백업 N개만 남기려면:
 
